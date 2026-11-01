@@ -120,7 +120,15 @@ const API = getApiBase();
 function communityId(): string {
   const saved = localStorage.getItem('utopia_community_id');
   if (saved) return saved;
-  const created = crypto.randomUUID();
+  // randomUUID() is only exposed in secure contexts. A page served over plain
+  // HTTP from a LAN IP is not secure, even though localhost is, so retain a
+  // compatible fallback for friends opening the dev server over Wi-Fi.
+  const created = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+        const random = Math.floor(Math.random() * 16);
+        return (char === 'x' ? random : (random & 0x3) | 0x8).toString(16);
+      });
   localStorage.setItem('utopia_community_id', created);
   return created;
 }
