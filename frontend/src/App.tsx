@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
@@ -9,12 +9,14 @@ import {
   HelpCircle, Layers, Lock, LogIn, LogOut, MapPin, MessageSquare,
   Navigation, Phone, Radio, RefreshCw, Search, Send, Share2,
   Shield, ShieldAlert, Sparkles, User, Users, Volume2, Wind,
-  Wrench, X, CheckCircle2, AlertOctagon, Car, Info, Home, Key,
+  Wrench, X, CheckCircle2, AlertOctagon, Car, Info, Home, Key, Heart, BadgeCheck, Trophy,
   ArrowLeft, LayoutGrid, SlidersHorizontal, ArrowUpDown, Camera,
   Upload, CheckSquare, FileText, Landmark, Briefcase, Crosshair, PlusCircle, CheckCircle,
-  Ticket, GitBranch, ClipboardList, CalendarClock
+  Ticket, GitBranch, ClipboardList, CalendarClock, Paperclip, Mic, Video,
+  Image as ImageIcon, Bot, Trash2, LocateFixed, Square, RotateCcw
 } from 'lucide-react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, BarChart, Bar } from 'recharts';
 
 export type Project = {
   id: number;
@@ -115,9 +117,18 @@ const getApiBase = () => {
 
 const API = getApiBase();
 
+function communityId(): string {
+  const saved = localStorage.getItem('utopia_community_id');
+  if (saved) return saved;
+  const created = crypto.randomUUID();
+  localStorage.setItem('utopia_community_id', created);
+  return created;
+}
+
 async function fetchApi<T>(url: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('utopia_token') || localStorage.getItem('civicgrid_token');
   const headers = new Headers(options.headers || {});
+  headers.set('X-Community-ID', communityId());
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
@@ -407,7 +418,9 @@ export default function App() {
     setAuthToken(token);
     setCurrentUser(user);
     setToastMessage(`Authenticated as ${user.name} (${user.badge_id})`);
-    if (user.role === 'onsite') {
+    if (user.role === 'citizen') {
+      nav(`/citizen?pin=${activePincode || ''}&view=info`);
+    } else if (user.role === 'onsite') {
       nav('/onsite/dashboard');
     } else if (user.role === 'official') {
       nav('/department/dashboard');
@@ -537,6 +550,9 @@ export default function App() {
 
   const pathname = loc.pathname;
   const isLoginSelectionRoute = pathname === '/login';
+  const isCitizenLoginRoute = pathname === '/citizen/login';
+  const isContractorAdminRoute = pathname === '/admin/contractors';
+  const isDeptVerificationRoute = pathname === '/department/contractor-verification';
   const isMunicipalityLoginRoute = pathname === '/municipality/login';
   const isDepartmentLoginRoute = pathname === '/department/login';
   const isOnsiteLoginRoute = pathname === '/onsite/login';
@@ -545,7 +561,7 @@ export default function App() {
   const isDepartmentCreateProjectRoute = pathname === '/department/create-project' || pathname === '/official/create-project';
   const isOnsiteDashboardRoute = pathname === '/onsite/dashboard';
   const isCitizenExplicitRoute = pathname === '/citizen';
-  const isPortalRoute = isLoginSelectionRoute || isMunicipalityLoginRoute || isDepartmentLoginRoute || isOnsiteLoginRoute || isMunicipalityDashboardRoute || isDepartmentDashboardRoute || isDepartmentCreateProjectRoute || isOnsiteDashboardRoute;
+  const isPortalRoute = isLoginSelectionRoute || isCitizenLoginRoute || isContractorAdminRoute || isDeptVerificationRoute || isMunicipalityLoginRoute || isDepartmentLoginRoute || isOnsiteLoginRoute || isMunicipalityDashboardRoute || isDepartmentDashboardRoute || isDepartmentCreateProjectRoute || isOnsiteDashboardRoute;
 
   return (
     <div className="app-shell">
@@ -634,6 +650,8 @@ export default function App() {
                 <Users size={15} />
                 Citizen Portal
               </button>
+              {currentUser?.role==='admin'&&<button className="nav-link" onClick={()=>nav('/admin/contractors')}>Performance Management</button>}
+              {currentUser?.role==='official'&&<button className="nav-link" onClick={()=>nav('/department/contractor-verification')}>Complaint Verification</button>}
               <button
                 className={`nav-link ${isLoginSelectionRoute ? 'active' : ''}`}
                 onClick={() => nav('/login')}
@@ -729,6 +747,12 @@ export default function App() {
       {isLoginSelectionRoute ? (
         /* 1. ROLE SELECTION ROUTE (/login) */
         <RoleSelectionPage />
+      ) : isCitizenLoginRoute ? (
+        <CitizenLoginPage onLogin={handleLogin} onBack={() => nav(-1)} />
+      ) : isContractorAdminRoute ? (
+        currentUser?.role==='admin' ? <ContractorAdminPage onToast={setToastMessage}/> : <MunicipalityLoginPage onLogin={handleLogin}/>
+      ) : isDeptVerificationRoute ? (
+        (currentUser?.role==='official'||currentUser?.role==='admin') ? <DepartmentComplaintVerificationPage onToast={setToastMessage}/> : <DepartmentLoginPage onLogin={handleLogin}/>
       ) : isMunicipalityLoginRoute ? (
         /* 2. MUNICIPALITY LOGIN ROUTE (/municipality/login) */
         currentUser && currentUser.role === 'admin' ? (
@@ -1428,12 +1452,14 @@ export default function App() {
                         <div className="qa-question">
                           <HelpCircle size={15} />
                           <div>
-                            <span>{q.message}</span>
+                            <strong>{q.kind} · {q.ref}</strong><br /><span>{q.message}</span>
                             <small style={{ display: 'block', color: '#64748b', fontSize: '10px', marginTop: '2px' }}>
-                              Asked by Resident of {q.locality || activeAreaName} · Ref: {q.ref}
+                              {q.project_title ? `${q.project_title} · ` : ''}{q.locality || activeAreaName} · {formatDate(q.created)}{q.contractor ? ` · Contractor ${q.contractor}` : ''}
                             </small>
                           </div>
                         </div>
+
+                        {!q.is_question && <CommunityComplaintActions issue={q} onToast={setToastMessage} />}
 
                         {q.official_reply ? (
                           <div className="qa-reply">
@@ -1446,6 +1472,7 @@ export default function App() {
                             <span>Awaiting Official Municipal Response</span>
                           </div>
                         )}
+                        <IssueEvidence items={q.attachments || []} />
                       </div>
                     ))}
 
@@ -1720,6 +1747,17 @@ export default function App() {
           </button>
         </div>
       )}
+
+      {!isPortalRoute && <UtopiaAIWidget
+        defaultPincode={activePincode}
+        defaultLocality={activeAreaName}
+        onIssueSubmitted={ref => {
+          setToastMessage(`Grievance registered under Ref: ${ref}`);
+          qc.invalidateQueries({ queryKey: ['issues'] });
+          qc.invalidateQueries({ queryKey: ['issues', activePincode] });
+          qc.invalidateQueries({ queryKey: ['admin_issues'] });
+        }}
+      />}
 
       {/* MOBILE BOTTOM NAVIGATION BAR */}
       <nav className="mobile-bottom-nav">
@@ -2655,6 +2693,16 @@ function ResponsiveAboutPage({ onBackToMap }: { onBackToMap: () => void }) {
           <h3>Official Municipal Portal</h3>
           <p>
             Authorized municipal officers access a dedicated operations portal via Employee ID to manage milestone progress, triage grievances, and resolve interdepartmental DigSync overlaps.
+          </p>
+        </div>
+
+        <div className="about-feature-card">
+          <div className="about-feature-icon blue">
+            <Users size={22} />
+          </div>
+          <h3>Developed by Team Lazarus</h3>
+          <p>
+            Utopia was developed by Team Lazarus, a group of students from IIITDM Kancheepuram.
           </p>
         </div>
       </div>
@@ -4145,7 +4193,7 @@ function OnsiteDashboard({
     return projects[0]?.id || 1;
   });
 
-  const [activeTab, setActiveTab] = useState<'progress' | 'photo' | 'blocker' | 'log' | 'delay' | 'history'>('progress');
+  const [activeTab, setActiveTab] = useState<'progress' | 'photo' | 'blocker' | 'log' | 'delay' | 'history' | 'performance'>('progress');
 
   // Form states
   const [progressPct, setProgressPct] = useState<number>(65);
@@ -4542,6 +4590,9 @@ function OnsiteDashboard({
             >
               <FileText size={15} /> Recent Submissions ({fieldSubmissions.length})
             </button>
+            <button className={`onsite-tab-btn ${activeTab === 'performance' ? 'active' : ''}`} onClick={() => setActiveTab('performance')}>
+              <Trophy size={15} /> My Performance Score
+            </button>
           </div>
 
           {/* TAB 1: PROGRESS UPDATE */}
@@ -4886,6 +4937,7 @@ function OnsiteDashboard({
               )}
             </div>
           )}
+          {activeTab === 'performance' && <ContractorPerformanceDashboard mode="onsite" />}
         </div>
       </div>
     </div>
@@ -6140,6 +6192,7 @@ function DepartmentDashboard({
 
                 <div className="grievance-content">
                   <p>{iss.message}</p>
+                  <IssueEvidence items={iss.attachments || []} />
                   <div style={{ fontSize: '12px', color: '#64748b', marginTop: '6px' }}>
                     Locality: <strong style={{ color: '#334155' }}>{iss.locality}</strong> · Logged: {formatDate(iss.created)}
                     {iss.project_title && (
@@ -6848,7 +6901,7 @@ function MunicipalDashboard({
   onToast: (msg: string) => void;
 }) {
   const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<'status_explorer' | 'digsync' | 'projects' | 'grievances' | 'hazards'>('status_explorer');
+  const [activeTab, setActiveTab] = useState<'status_explorer' | 'digsync' | 'projects' | 'grievances' | 'hazards' | 'contractor_performance'>('status_explorer');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<'All' | 'In progress' | 'Completed' | 'Delayed' | 'Scheduled'>('In progress');
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('All');
   const [statusSearchQuery, setStatusSearchQuery] = useState('');
@@ -7158,6 +7211,9 @@ function MunicipalDashboard({
         >
           <AlertTriangle size={16} />
           Hazards & GMaps Feeds
+        </button>
+        <button className={`dash-tab-btn ${activeTab === 'contractor_performance' ? 'active' : ''}`} onClick={() => setActiveTab('contractor_performance')}>
+          <Trophy size={16} /> Contractor Performance
         </button>
       </div>
 
@@ -7498,6 +7554,7 @@ function MunicipalDashboard({
 
                 <div className="grievance-content">
                   <p style={{ fontSize: '13.5px', lineHeight: 1.55 }}>"{iss.message}"</p>
+                  <IssueEvidence items={iss.attachments || []} />
                   <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '6px' }}>
                     Locality: <strong>{iss.locality}</strong> · Logged: {formatDate(iss.created)}
                     {iss.phone && <span> · Phone: <strong style={{ color: '#334155' }}>{iss.phone}</strong></span>}
@@ -7593,6 +7650,7 @@ function MunicipalDashboard({
           </div>
         </div>
       )}
+      {activeTab === 'contractor_performance' && <ContractorPerformanceDashboard mode="municipal" />}
 
       {/* Project Operations & Stage Auto-Sync Modal */}
       {editingProject && (
@@ -7766,6 +7824,7 @@ function MunicipalDashboard({
                         <p style={{ marginTop: '6px', fontSize: '13.5px', color: '#1e293b', lineHeight: 1.5 }}>
                           "{iss.message}"
                         </p>
+                        <IssueEvidence items={iss.attachments || []} />
                         {iss.official_reply ? (
                           <div className="qa-reply" style={{ marginTop: '8px' }}>
                             <strong>Official Departmental Response (Live in Public Feed):</strong> {iss.official_reply}
@@ -7839,6 +7898,9 @@ function CitizenIssueModal({
   const [severity, setSeverity] = useState('Normal');
   const [intimated, setIntimated] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState('');
+  const [submitError, setSubmitError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -7847,8 +7909,15 @@ function CitizenIssueModal({
       return;
     }
     setLoading(true);
+    setSubmitError('');
 
     try {
+      const uploaded: { media_id: number; upload_token: string }[] = [];
+      for (let i = 0; i < evidenceFiles.length; i += 1) {
+        setUploadProgress(`Uploading evidence ${i + 1} of ${evidenceFiles.length}…`);
+        uploaded.push(await uploadMedia(evidenceFiles[i], percent => setUploadProgress(`Uploading evidence ${i + 1} of ${evidenceFiles.length} · ${percent}%`)));
+      }
+      setUploadProgress('Submitting grievance…');
       const res = await fetchApi<any>('/issues', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -7861,20 +7930,19 @@ function CitizenIssueModal({
           locality: locality.trim() || 'Chennai',
           severity,
           is_question: kind.includes('Question') || kind.includes('Inquiry'),
-          intimated_in_advance: intimated
+          intimated_in_advance: intimated,
+          attachments: uploaded
         })
       });
       qc.invalidateQueries({ queryKey: ['issues'] });
       qc.invalidateQueries({ queryKey: ['issues', pincode] });
       qc.invalidateQueries({ queryKey: ['admin_issues'] });
-      onSuccess(res.ref || 'CGI-261010-0088');
-    } catch {
-      qc.invalidateQueries({ queryKey: ['issues'] });
-      qc.invalidateQueries({ queryKey: ['issues', pincode] });
-      qc.invalidateQueries({ queryKey: ['admin_issues'] });
-      onSuccess(`CGI-261010-${Math.floor(1000 + Math.random() * 9000)}`);
+      onSuccess(res.ref);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'The grievance could not be submitted. Please try again.');
     } finally {
       setLoading(false);
+      setUploadProgress('');
     }
   };
 
@@ -7904,6 +7972,15 @@ function CitizenIssueModal({
                 <option value="GCC Roads & Bridges">GCC Roads & Bridges</option>
               </select>
             </div>
+
+            <EvidencePicker
+              files={evidenceFiles}
+              onChange={setEvidenceFiles}
+              onTranscript={transcript => setMessage(previous => `${previous.trimEnd()}${previous.trim() ? ' ' : ''}${transcript}`)}
+              disabled={loading}
+            />
+            {uploadProgress && <div className="media-upload-progress" role="status">{uploadProgress}</div>}
+            {submitError && <div className="media-error" role="alert">{submitError}</div>}
 
             <div className="form-group">
               <label>Grievance / Query Type</label>
@@ -7966,5 +8043,493 @@ function CitizenIssueModal({
         </form>
       </div>
     </div>
+  );
+}
+
+type UploadedEvidence = { media_id: number; upload_token: string; media_type: string; filename: string; size: number; url: string };
+
+type ChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+  at: Date;
+  sources?: { type: string; id: number; code?: string; title: string }[];
+  files?: string[];
+};
+
+function UtopiaAIWidget({ defaultPincode, defaultLocality, onIssueSubmitted }: {
+  defaultPincode: string; defaultLocality: string; onIssueSubmitted: (ref: string) => void;
+}) {
+  const welcome = "Hello! Welcome to Utopia. I'm your civic assistant. You can ask me about public works, nearby projects, road closures, project progress, civic issues, and grievance reporting. How can I help you today?";
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([{ role: 'assistant', content: welcome, at: new Date() }]);
+  const [text, setText] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [showEvidenceTools, setShowEvidenceTools] = useState(false);
+  const [uploadedEvidence, setUploadedEvidence] = useState<UploadedEvidence[]>([]);
+  const [uploading, setUploading] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locationMessage, setLocationMessage] = useState('');
+  const [conversationId, setConversationId] = useState<string | undefined>();
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReview, setReportReview] = useState(false);
+  const [reportKind, setReportKind] = useState('Missing barricades');
+  const [reportDescription, setReportDescription] = useState('');
+  const [reportLocality, setReportLocality] = useState(defaultLocality || '');
+  const [reportPin, setReportPin] = useState(defaultPincode || '');
+  const [reportPhone, setReportPhone] = useState('');
+  const [reportEmail, setReportEmail] = useState('');
+  const [reportProjectId, setReportProjectId] = useState('');
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const { data: reportProjects = [] } = useQuery({
+    queryKey: ['ai-report-projects'],
+    queryFn: () => fetchApi<Project[]>('/projects'),
+    enabled: open && reportOpen,
+    staleTime: 5 * 60 * 1000
+  });
+
+  useEffect(() => {
+    messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, sending, reportOpen]);
+
+  const addMessage = (message: ChatMessage) => setMessages(previous => [...previous, message]);
+  const detectReportType = (value: string) => {
+    const lower = value.toLowerCase();
+    if (lower.includes('noise')) return 'Excessive noise';
+    if (lower.includes('dust')) return 'Excessive dust';
+    if (lower.includes('water')) return 'Water supply disruption';
+    if (lower.includes('power') || lower.includes('electric')) return 'Power outage';
+    if (lower.includes('road') || lower.includes('pothole')) return 'Road access blocked';
+    return 'Missing barricades';
+  };
+
+  const requestLocation = () => {
+    setLocationMessage('');
+    if (!navigator.geolocation) { setLocationMessage('Location is not available in this browser. Enter a locality or PIN instead.'); return; }
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        setLocation({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+        setLocationMessage('Your current location is ready for nearby project search.');
+      },
+      () => setLocationMessage('Location permission was not granted. Enter a locality or PIN to search nearby works.'),
+      { enableHighAccuracy: false, timeout: 10000 }
+    );
+  };
+
+  const send = async (override?: string) => {
+    const messageText = (override ?? text).trim();
+    if (!messageText && files.length === 0) return;
+    if (uploadedEvidence.length + files.length > 5) {
+      setError('A grievance can include up to 5 evidence files. Remove an attachment before adding another.');
+      return;
+    }
+    setError('');
+    setSending(true);
+    try {
+      const newUploads: UploadedEvidence[] = [];
+      for (let i = 0; i < files.length; i += 1) {
+        setUploading(`Uploading ${i + 1} of ${files.length} evidence file(s)…`);
+        newUploads.push(await uploadMedia(files[i], percent => setUploading(`Uploading ${i + 1} of ${files.length} evidence file(s) · ${percent}%`)));
+      }
+      const allEvidence = [...uploadedEvidence, ...newUploads];
+      setUploadedEvidence(allEvidence);
+      setFiles([]);
+      const shownText = messageText || 'I attached evidence to this conversation.';
+      addMessage({ role: 'user', content: shownText, at: new Date(), files: newUploads.map(item => item.filename) });
+      setText('');
+
+      const incident = /\b(how can i report|how do i report|how to report)\b/i.test(messageText)
+        ? false
+        : /\b(there is|there's|i see|i found|please report|report|file a|submit a)\b/i.test(messageText) && /\b(trench|pothole|noise|dust|water|power|road|issue|grievance|complaint|barricade)\b/i.test(messageText);
+      if (newUploads.length > 0 && !messageText) {
+        addMessage({ role: 'assistant', content: `I received ${newUploads.length} file(s) as evidence. I cannot inspect, identify, or transcribe their contents. What would you like to do with them? You can say “report an issue” to attach them to a grievance.`, at: new Date() });
+        return;
+      }
+      if (incident) {
+        setReportKind(detectReportType(messageText));
+        setReportDescription(messageText && !/^(report|file a|submit a)\b/i.test(messageText) ? messageText : '');
+        setReportOpen(true);
+        setReportReview(false);
+        addMessage({ role: 'assistant', content: `I received ${allEvidence.length} evidence file(s). I can attach them to a grievance, but I cannot inspect, identify, or transcribe media. Please review the report details below and confirm before I submit anything.`, at: new Date() });
+        return;
+      }
+
+      const answer = await fetchApi<any>('/ai/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: messageText || `A citizen attached ${newUploads.length} evidence file(s). Do not interpret their contents.`,
+          conversation_id: conversationId,
+          location,
+          context: messages.filter(item => item.role !== 'assistant' || item.content !== welcome).slice(-6).map(item => ({ role: item.role, content: item.content.slice(0, 1200) }))
+        })
+      });
+      setConversationId(answer.conversation_id);
+      addMessage({
+        role: 'assistant', content: answer.answer + (newUploads.length ? `\n\nI also received ${newUploads.length} evidence file(s). I cannot inspect their contents. Say “report an issue” if you want to attach them to a grievance.` : ''), at: new Date(), sources: answer.sources,
+        files: allEvidence.length ? allEvidence.map(item => item.filename) : undefined
+      });
+    } catch (e) {
+      setText(messageText);
+      setError(e instanceof Error ? e.message : 'The assistant is temporarily unavailable. Please retry.');
+    } finally {
+      setSending(false);
+      setUploading('');
+    }
+  };
+
+  const submitReport = async () => {
+    setError('');
+    setSending(true);
+    try {
+      const result = await fetchApi<any>('/issues', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: reportKind, message: reportDescription.trim(), locality: reportLocality.trim(),
+          project_id: reportProjectId ? Number(reportProjectId) : undefined,
+          pincode: /^\d{6}$/.test(reportPin) ? reportPin : undefined,
+          phone: reportPhone.trim() || undefined, email: reportEmail.trim() || undefined,
+          is_question: false, severity: 'Normal',
+          attachments: uploadedEvidence.map(item => ({ media_id: item.media_id, upload_token: item.upload_token }))
+        })
+      });
+      setReportOpen(false);
+      setReportReview(false);
+      setUploadedEvidence([]);
+      setReportProjectId('');
+      addMessage({ role: 'assistant', content: `Your grievance was submitted successfully. Reference: ${result.ref}. The department recorded is ${result.department}.`, at: new Date(), sources: [] });
+      onIssueSubmitted(result.ref);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The grievance could not be submitted. Please retry.');
+    } finally { setSending(false); }
+  };
+
+  const clearChat = () => {
+    setMessages([{ role: 'assistant', content: welcome, at: new Date() }]);
+    setConversationId(undefined); setError(''); setFiles([]); setUploadedEvidence([]);
+    setReportOpen(false); setReportReview(false);
+  };
+
+  const suggestions = [
+    'What projects are happening in my area?',
+    'Are there any delayed projects near me?',
+    'What is the current status of the drainage project?',
+    'Are there any road closures near T. Nagar?',
+    'How can I report an issue?',
+    'How do I check my grievance status?'
+  ];
+
+  return <>
+    {!open && <button className="utopia-ai-launcher" type="button" aria-label="Open Utopia AI citizen assistant" onClick={() => setOpen(true)}><Bot size={21} /><span>Ask Utopia AI</span></button>}
+    {open && <section className="utopia-ai-panel" role="dialog" aria-modal="false" aria-label="Utopia AI citizen assistant">
+      <header className="utopia-ai-header">
+        <div className="utopia-ai-title"><span className="utopia-ai-avatar"><Bot size={19} /></span><div><strong>Utopia AI</strong><small>Citizen information assistant</small></div></div>
+        <div className="utopia-ai-head-actions">
+          <button type="button" aria-label="Clear conversation" title="Clear conversation" onClick={clearChat}><RotateCcw size={17} /></button>
+          <button type="button" aria-label="Minimize assistant" title="Close chat" onClick={() => setOpen(false)}><X size={19} /></button>
+        </div>
+      </header>
+      <div className="utopia-ai-messages" ref={messagesRef} aria-live="polite">
+        {messages.map((message, index) => <article key={`${index}-${message.at.getTime()}`} className={`utopia-chat-message ${message.role}`}>
+          <div className="utopia-chat-bubble">{message.content.split('\n').map((line, i) => <p key={i}>{line}</p>)}
+            {message.files?.length ? <div className="chat-file-list">{message.files.map(file => <span key={file}><Paperclip size={13} /> {file}</span>)}</div> : null}
+            {!!message.sources?.length && <div className="chat-sources"><strong>Utopia records</strong>{message.sources.map(source => <span key={`${source.type}-${source.id}`}>{source.code ? `${source.code} · ` : ''}{source.title}</span>)}</div>}
+          </div>
+          <time>{message.at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+        </article>)}
+        {messages.length === 1 && <div className="utopia-chat-suggestions"><span>Try asking</span>{suggestions.map(question => <button type="button" key={question} disabled={sending} onClick={() => void send(question)}>{question}</button>)}</div>}
+        {reportOpen && <div className="chat-report-card">
+          <strong>{reportReview ? 'Review your grievance' : 'Prepare an issue report'}</strong>
+          {reportReview ? <div className="chat-report-summary"><p><b>Type:</b> {reportKind}</p><p><b>Location:</b> {reportLocality}{reportPin ? ` · PIN ${reportPin}` : ''}</p><p><b>Description:</b> {reportDescription}</p><p><b>Evidence:</b> {uploadedEvidence.length ? uploadedEvidence.map(item => item.filename).join(', ') : 'None attached'}</p><p><b>Contact:</b> {reportPhone || reportEmail || 'Not provided'}</p><p>Only submit if these details are correct.</p></div> : <>
+            <label>Issue type<select value={reportKind} onChange={e => setReportKind(e.target.value)}><option>Missing barricades</option><option>Excessive noise</option><option>Excessive dust</option><option>Road access blocked</option><option>Water supply disruption</option><option>Power outage</option><option>Other</option></select></label>
+            <label>Locality / street<input value={reportLocality} onChange={e => setReportLocality(e.target.value)} placeholder="Enter locality or street" required /></label>
+            <label>PIN code (optional)<input value={reportPin} onChange={e => setReportPin(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" placeholder="6-digit PIN" /></label>
+            <label>Related project (optional)<select value={reportProjectId} onChange={e => setReportProjectId(e.target.value)}><option value="">No specific project</option>{reportProjects.map(project => <option key={project.id} value={project.id}>{project.code} · {project.title}</option>)}</select></label>
+            <label>Description<textarea value={reportDescription} onChange={e => setReportDescription(e.target.value)} minLength={8} placeholder="Describe what happened" required /></label>
+            <label>Phone (optional)<input value={reportPhone} onChange={e => setReportPhone(e.target.value)} /></label>
+            <label>Email (optional)<input type="email" value={reportEmail} onChange={e => setReportEmail(e.target.value)} /></label>
+          </>}
+          <div className="chat-report-actions">
+            {reportReview ? <><button type="button" onClick={() => setReportReview(false)}>Edit details</button><button type="button" className="confirm-report" disabled={sending} onClick={() => void submitReport()}>Confirm and submit</button></> : <><button type="button" onClick={() => { setReportOpen(false); setReportReview(false); setUploadedEvidence([]); }}>Cancel</button><button type="button" className="confirm-report" disabled={sending || reportDescription.trim().length < 8 || !reportLocality.trim() || (!!reportPin && !/^\d{6}$/.test(reportPin))} onClick={() => setReportReview(true)}>Review before submission</button></>}
+          </div>
+        </div>}
+        {sending && <div className="utopia-chat-typing" role="status"><span /><span /><span /> {uploading || 'Checking Utopia records…'}</div>}
+        {error && <div className="utopia-chat-error" role="alert">{error}<button type="button" onClick={() => void send()}>Retry</button></div>}
+      </div>
+      <div className="utopia-ai-tools"><button type="button" className="chat-location-button" onClick={requestLocation}><LocateFixed size={15} /> Share current location</button>{locationMessage && <small>{locationMessage}</small>}</div>
+      <div className="utopia-ai-compose">
+        <form onSubmit={e => { e.preventDefault(); void send(); }}>
+          <textarea aria-label="Message Utopia AI" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Ask about public works or attach evidence…" rows={2} />
+          <button type="button" className="chat-attach-toggle" aria-label="Attach image, audio, or video evidence" title="Attach evidence" onClick={() => setShowEvidenceTools(value => !value)}><Paperclip size={18} /></button>
+          <button type="submit" aria-label="Send message" disabled={sending || (!text.trim() && !files.length)}><Send size={17} /></button>
+        </form>
+        {showEvidenceTools && <EvidencePicker
+          files={files}
+          onChange={setFiles}
+          onTranscript={transcript => setText(previous => `${previous.trimEnd()}${previous.trim() ? ' ' : ''}${transcript}`)}
+          disabled={sending}
+        />}
+        <small>Answers use current public Utopia records. Uploaded media is not analyzed by the assistant.</small>
+      </div>
+    </section>}
+  </>;
+}
+
+function DepartmentComplaintVerificationPage({onToast}:{onToast:(m:string)=>void}) {
+  const qc=useQueryClient();const {data=[],isLoading}=useQuery({queryKey:['department-contractor-complaints'],queryFn:()=>fetchApi<any[]>('/department/contractor-complaints')});const [notes,setNotes]=useState<Record<number,string>>({});const [severity,setSeverity]=useState<Record<number,string>>({});const [busy,setBusy]=useState<number|null>(null);
+  const reviewAction=async(issue:any,action:'Under Review'|'Additional Evidence Requested')=>{if((notes[issue.id]||'').trim().length<5){onToast('Enter an internal note or evidence request.');return;}try{await fetchApi(`/department/complaints/${issue.id}/review-action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,note:notes[issue.id]})});onToast(action==='Under Review'?'Complaint marked under review.':'Additional evidence requested.');await qc.invalidateQueries({queryKey:['department-contractor-complaints']});await qc.invalidateQueries({queryKey:['issues']});}catch(err){onToast(err instanceof Error?err.message:'Could not update complaint review status.');}};
+  const decide=async(issue:any,decision:'Verified'|'Rejected')=>{if((notes[issue.id]||'').trim().length<8){onToast('Add a verification reason of at least 8 characters.');return;}setBusy(issue.id);try{const path=decision==='Verified'?`/department/complaints/${issue.id}/verify`:`/department/complaints/${issue.id}/reject`;const result=await fetchApi<any>(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision,note:notes[issue.id],severity:severity[issue.id]||'minor'})});onToast(result.scoring_triggered?'Verified; the linked contractor score was updated.':`Complaint ${decision.toLowerCase()}.`);await Promise.all([qc.invalidateQueries({queryKey:['department-contractor-complaints']}),qc.invalidateQueries({queryKey:['admin_issues']}),qc.invalidateQueries({queryKey:['issues']})]);}catch(err){onToast(err instanceof Error?err.message:'Decision could not be saved.');}finally{setBusy(null);}};
+  return <main className="contractor-page"><span className="eyebrow">DEPARTMENT WORKFLOW</span><h1>Contractor Performance & Complaint Verification</h1><p>Community corroboration prioritizes review. Only an officer decision affects contractor scores.</p>{isLoading?'Loading complaints…':data.length===0?<div className="contractor-empty">No complaints are waiting for review.</div>:<div className="verification-list">{data.map((i:any)=><article className="verification-card" key={i.id}><div className="verification-card-head"><div><b>{i.kind} · {i.ref}</b><small>{i.project_title||'No linked project'} · {i.locality} · {formatDate(i.created)}</small></div><span className={`community-status ${i.community_corroborated?'corroborated':''}`}>{i.official_verification==='Pending'?(i.community_corroborated?'Community Corroborated':'Submitted'):i.official_verification}</span></div><p>{i.message}</p><div className="verification-meta"><span>{i.confirmation_count} community confirmations</span><span>Contractor: {i.contractor||'Not assigned'}</span><span>{i.department}</span></div><IssueEvidence items={i.attachments||[]}/>{i.comments?.length>0&&<div className="verification-comments"><b>Community comments</b>{i.comments.map((c:any)=><div key={c.id}><p>“{c.comment}”</p><IssueEvidence items={c.evidence||[]}/></div>)}</div>}{i.internal_notes&&<div className="verification-comments"><b>Internal officer notes</b><p>{i.internal_notes}</p></div>}{i.official_verification==='Pending'?<><textarea placeholder="Officer note: decision reason or internal review note" value={notes[i.id]||''} onChange={e=>setNotes({...notes,[i.id]:e.target.value})}/><label>Complaint severity for scoring <select value={severity[i.id]||'minor'} onChange={e=>setSeverity({...severity,[i.id]:e.target.value})}><option value="minor">Minor (−3)</option><option value="major">Major (−7)</option><option value="critical">Critical (−15)</option></select></label><div className="verification-buttons"><button disabled={busy===i.id} className="community-comment-submit" onClick={()=>decide(i,'Verified')}>Verify complaint</button><button disabled={busy===i.id} className="table-action-btn" onClick={()=>decide(i,'Rejected')}>Reject complaint</button><button className="table-action-btn" onClick={()=>reviewAction(i,'Under Review')}>Mark under review</button><button className="table-action-btn" onClick={()=>reviewAction(i,'Additional Evidence Requested')}>Request evidence</button></div></>:<p className="privacy-note">{i.official_verification} · {i.verification_reason}</p>}</article>)}</div>}</main>;
+}
+
+function ContractorAdminPage({onToast}:{onToast:(m:string)=>void}) {
+  const qc=useQueryClient();const {data:stats}=useQuery({queryKey:['contractor-admin-stats'],queryFn:()=>fetchApi<any>('/admin/contractor-statistics')});const {data:contractors=[]}=useQuery({queryKey:['admin-contractors'],queryFn:()=>fetchApi<any[]>('/admin/contractors')});const {data:rules=[]}=useQuery({queryKey:['contractor-rules'],queryFn:()=>fetchApi<any[]>('/admin/contractor-scoring-rules')});const {data:threshold}=useQuery({queryKey:['community-threshold'],queryFn:()=>fetchApi<any>('/admin/community-confirmation-threshold')});const {data:appeals=[]}=useQuery({queryKey:['contractor-appeals'],queryFn:()=>fetchApi<any[]>('/admin/contractor-appeals')});const [selected,setSelected]=useState<any>(null);const [points,setPoints]=useState(0);const [reason,setReason]=useState('');const [thresholdValue,setThresholdValue]=useState('');
+  const adjust=async(e:React.FormEvent)=>{e.preventDefault();try{await fetchApi(`/admin/contractors/${selected.id}/score-adjustment`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({points:Number(points),reason})});setReason('');setSelected(null);onToast('Audited score adjustment recorded.');qc.invalidateQueries({queryKey:['admin-contractors']});qc.invalidateQueries({queryKey:['contractor-admin-stats']});}catch(err){onToast(err instanceof Error?err.message:'Adjustment failed.');}};
+  const saveRule=async(r:any)=>{try{await fetchApi(`/admin/contractor-scoring-rules/${r.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({points:Number(r.points),is_active:r.is_active})});onToast('Scoring rule updated.');qc.invalidateQueries({queryKey:['contractor-rules']});}catch(err){onToast(err instanceof Error?err.message:'Rule update failed.');}};
+  const setThreshold=async()=>{try{await fetchApi('/admin/community-confirmation-threshold',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({threshold:Number(thresholdValue||threshold?.threshold)})});onToast('Community corroboration threshold updated.');qc.invalidateQueries({queryKey:['community-threshold']});}catch(err){onToast(err instanceof Error?err.message:'Could not update threshold.');}};
+  const linkOnsiteAccount=async(c:any)=>{const badge=window.prompt(`On-site badge to link with ${c.name}:`,c.onsite_badge_id||'');if(badge===null)return;try{await fetchApi(`/admin/contractors/${c.id}/onsite-account`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({badge_id:badge.trim()||null})});onToast('On-site account link saved.');qc.invalidateQueries({queryKey:['admin-contractors']});}catch(err){onToast(err instanceof Error?err.message:'Could not link on-site account.');}};
+  const review=async(a:any,approved:boolean)=>{try{await fetchApi(`/admin/contractor-appeals/${a.id}/review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approved,response:approved?'Appeal approved after administrative review.':'Appeal reviewed and rejected.'})});onToast('Appeal decision recorded.');qc.invalidateQueries({queryKey:['contractor-appeals']});qc.invalidateQueries({queryKey:['admin-contractors']});}catch(err){onToast(err instanceof Error?err.message:'Appeal review failed.');}};
+  return <main className="contractor-page"><span className="eyebrow">MUNICIPAL ADMINISTRATION</span><h1>Contractor Performance Management</h1><div className="contractor-kpis">{[['Total contractors',stats?.contractors||0],['Active',stats?.active_contractors||0],['Average score',stats?.average_score||0],['Excellent',stats?.excellent||0],['Needs improvement',stats?.needs_improvement||0],['Verified complaints',stats?.verified_complaints||0],['Corroborated complaints',stats?.community_corroborated||0]].map(x=><div className="contractor-kpi" key={x[0]}><small>{x[0]}</small><strong>{x[1]}</strong></div>)}</div><section className="contractor-chart"><h2>Contractor directory</h2><div className="contractor-table-wrap"><table className="contractor-table"><thead><tr><th>Contractor</th><th>Department</th><th>Projects</th><th>Completed</th><th>Complaints</th><th>Score / Grade</th><th/></tr></thead><tbody>{contractors.map((c:any)=><tr key={c.id}><td>{c.name}<small>{c.registration_number}</small></td><td>{c.department}</td><td>{c.total_projects}</td><td>{c.completed_projects}</td><td>{c.verified_complaints}</td><td>{c.score} · {c.grade}</td><td><button className="table-action-btn" onClick={()=>linkOnsiteAccount(c)}>{c.onsite_badge_id?`Badge ${c.onsite_badge_id}`:'Link on-site badge'}</button><button className="table-action-btn" onClick={()=>setSelected(c)}>Adjust score</button></td></tr>)}</tbody></table></div></section><section className="contractor-chart"><h2>Scoring rules</h2>{rules.map((r:any)=><div className="rule-row" key={r.id}><span>{r.description}</span><input type="number" value={r.points} onChange={e=>r.points=Number(e.target.value)}/><label><input type="checkbox" checked={r.is_active} onChange={e=>r.is_active=e.target.checked}/> Active</label><button className="table-action-btn" onClick={()=>saveRule(r)}>Save</button></div>)}</section><section className="contractor-chart"><h2>Community corroboration threshold</h2><div className="rule-row"><span>Confirmations required</span><input type="number" min="1" value={thresholdValue||threshold?.threshold||5} onChange={e=>setThresholdValue(e.target.value)}/><button className="table-action-btn" onClick={setThreshold}>Save threshold</button></div></section><section className="contractor-chart"><h2>Contractor appeals</h2>{appeals.filter((a:any)=>a.status==='Pending').map((a:any)=><div className="rule-row" key={a.id}><span>{a.contractor} · {a.appeal_reason}</span><button className="table-action-btn" onClick={()=>review(a,true)}>Approve and reverse</button><button className="table-action-btn" onClick={()=>review(a,false)}>Reject</button></div>)}</section>{selected&&<form className="appeal-form" onSubmit={adjust}><h3>Audited score adjustment · {selected.name}</h3><label>Points <input type="number" min="-100" max="100" value={points} onChange={e=>setPoints(Number(e.target.value))}/></label><textarea required minLength={8} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Mandatory reason"/><button className="community-comment-submit">Record adjustment</button><button type="button" onClick={()=>setSelected(null)}>Cancel</button></form>}</main>;
+}
+
+function ContractorPerformanceDashboard({mode}:{mode:'municipal'|'onsite'}) {
+  const endpoint=mode==='municipal'?'/admin/contractor-performance-dashboard':'/onsite/contractor-performance';
+  const {data,isLoading,error}=useQuery({queryKey:['embedded-contractor-performance',mode],queryFn:()=>fetchApi<any>(endpoint),refetchInterval:30000});
+  const [selectedId,setSelectedId]=useState<number|null>(null);const [search,setSearch]=useState('');
+  if(isLoading)return <section className="contractor-chart"><h2>Contractor performance</h2><p>Loading live score and project records…</p></section>;
+  if(error||!data)return <section className="contractor-chart"><h2>Contractor performance</h2><p className="community-error">Performance records could not be loaded.</p></section>;
+  const contractors=(data.contractors||[]).filter((c:any)=>!search||`${c.name} ${c.department}`.toLowerCase().includes(search.toLowerCase()));
+  const selected=contractors.find((c:any)=>c.id===selectedId)||contractors[0];
+  const trend=(data.transactions||[]).filter((t:any)=>t.contractor_id===selected?.id);
+  return <div className="embedded-performance"><div className="performance-heading"><div><span className="eyebrow">LIVE ACCOUNTABILITY DATA</span><h2>{mode==='municipal'?'Citywide Contractor Performance':'My Contractor Score'}</h2><p>{mode==='municipal'?'Scores, verified complaints, project completion and score history across GCC works.':data.scope}</p></div><button className="table-action-btn" onClick={()=>window.location.reload()}>Refresh data</button></div>
+    <div className="contractor-kpis">{(mode==='municipal'?[['Contractors',data.summary.total],['Average score',data.summary.average_score],['Excellent (90+)',data.summary.excellent],['Needs improvement',data.summary.needs_improvement],['Verified complaints',data.summary.verified_complaints],['Projects',data.summary.total_projects]]:[['My score',contractors[0]?.score??'—'],['Grade',contractors[0]?.grade??'—'],['Projects',contractors[0]?.total_projects??0],['Completed',contractors[0]?.completed_projects??0],['Verified complaints',contractors[0]?.verified_complaints??0]]).map(x=><div className="contractor-kpi" key={x[0]}><small>{x[0]}</small><strong>{x[1]}</strong></div>)}</div>
+    {contractors.length===0?<div className="contractor-empty">{mode==='onsite'?data.scope:'No contractor performance records are available yet.'}</div>:<div className="performance-grid"><section className="contractor-chart"><h3>{mode==='municipal'?'Current score by contractor':'My score trend'}</h3><ResponsiveContainer width="100%" height={300}><BarChart data={contractors} onClick={(event:any)=>{const row=event?.activePayload?.[0]?.payload;if(row)setSelectedId(row.id);}}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name" interval={0} angle={-15} textAnchor="end" height={70}/><YAxis domain={[0,100]}/><Tooltip/><Bar dataKey="score" fill="#0d9488" radius={[6,6,0,0]} cursor="pointer"/></BarChart></ResponsiveContainer>{mode==='municipal'&&<><input className="performance-search" placeholder="Find a contractor" value={search} onChange={e=>setSearch(e.target.value)}/><div className="performance-contractor-list">{contractors.map((c:any)=><button key={c.id} className={`performance-contractor-row ${selected?.id===c.id?'selected':''}`} onClick={()=>setSelectedId(c.id)}><span><b>{c.name}</b><small>{c.department} · {c.completed_projects}/{c.total_projects} completed · {c.verified_complaints} verified complaints</small></span><strong>{c.score} · {c.grade}</strong></button>)}</div></>}</section>
+    <section className="contractor-chart"><h3>{mode==='municipal'?`${selected?.name} · score history`:'My score history'}</h3><div className="performance-score-summary"><strong>{selected?.score}</strong><span>Grade {selected?.grade}</span></div>{trend.length?<ResponsiveContainer width="100%" height={250}><LineChart data={trend}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="date" tickFormatter={(v:string)=>formatDate(v)}/><YAxis domain={[0,100]}/><Tooltip/><Line type="monotone" dataKey="score" stroke="#0d9488" strokeWidth={3} dot/></LineChart></ResponsiveContainer>:<p>No score changes recorded yet. Your starting score is 100.</p>}<h4>Monthly score activity</h4>{data.monthly?.length?<ResponsiveContainer width="100%" height={180}><BarChart data={data.monthly}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="month"/><YAxis/><Tooltip/><Bar dataKey="positive" name="Points added" fill="#10b981"/><Bar dataKey="negative" name="Points deducted" fill="#ef4444"/></BarChart></ResponsiveContainer>:<p>No score transactions are available yet.</p>}</section></div>}
+  </div>;
+}
+
+function CitizenLoginPage({ onLogin, onBack }: { onLogin: (token: string, user: AuthUser) => void; onBack: () => void }) {
+  const [register, setRegister] = useState(false);
+  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState('');
+  const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true); setError('');
+    try {
+      const res = await fetchApi<any>(register ? '/auth/citizen/register' : '/auth/citizen/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email,password,...(register?{name}:{})}) });
+      onLogin(res.access_token, { ...res.user, department: 'Residents', designation: 'Citizen', badge_id: 'CITIZEN' });
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not sign in.'); } finally { setBusy(false); }
+  };
+  return <div className="portal-login-page"><div className="portal-login-card"><button className="modal-close-btn" onClick={onBack}><ArrowLeft size={18}/></button><h2>{register ? 'Create citizen account' : 'Citizen sign in'}</h2><p>Optional: an account helps you track complaints. You can confirm and comment on public complaints without signing in.</p>{error && <div className="login-error-alert">{error}</div>}<form className="login-form" onSubmit={submit}>{register && <label>Name<input required value={name} onChange={e=>setName(e.target.value)} minLength={2} maxLength={100}/></label>}<label>Email<input required type="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input required type="password" minLength={10} value={password} onChange={e=>setPassword(e.target.value)}/></label><button className="login-submit-btn" disabled={busy}>{busy?'Please wait…':register?'Create account':'Sign in'}</button></form><button className="table-action-btn" style={{marginTop:12}} onClick={()=>setRegister(v=>!v)}>{register?'Already registered? Sign in':'New here? Create an account'}</button></div></div>;
+}
+
+function CommunityComplaintActions({ issue, onToast }: { issue:any; onToast:(v:string)=>void }) {
+  const qc=useQueryClient(); const [open,setOpen]=useState(false); const [replyTo,setReplyTo]=useState<number|null>(null); const [comment,setComment]=useState(''); const [files,setFiles]=useState<File[]>([]); const [uploading,setUploading]=useState(false); const [error,setError]=useState('');
+  const {data:discussion=[]}=useQuery({queryKey:['issue-comments',issue.id],queryFn:()=>fetchApi<any[]>(`/issues/${issue.id}/comments`),enabled:open});
+  const {data:confirmations}=useQuery({queryKey:['issue-confirmations',issue.id],queryFn:()=>fetchApi<any>(`/issues/${issue.id}/confirmations`),enabled:open});
+  const confirmation=useMutation({mutationFn:async()=> issue.confirmed_by_me ? fetchApi<any>(`/issues/${issue.id}/confirmations/me`,{method:'DELETE'}) : fetchApi<any>(`/issues/${issue.id}/confirmations`,{method:'POST'}),onMutate:async()=>{await qc.cancelQueries({queryKey:['issues']}); const prev=qc.getQueriesData<any[]>({queryKey:['issues']}); qc.setQueriesData<any[]>({queryKey:['issues']},old=>old?.map(i=>i.id===issue.id?{...i,confirmation_count:Math.max(0,(i.confirmation_count||0)+(i.confirmed_by_me?-1:1)),confirmed_by_me:!i.confirmed_by_me}:i));return {prev};},onError:(_e,_v,ctx)=>ctx?.prev.forEach(([key,data])=>qc.setQueryData(key,data)),onSuccess:async result=>{issue.confirmation_count=result.count;issue.confirmed_by_me=result.confirmed_by_me;issue.community_corroborated=result.community_corroborated;onToast(result.confirmed_by_me?'Your experience was added.':'Your confirmation was removed.');await qc.invalidateQueries({queryKey:['issues']});await qc.invalidateQueries({queryKey:['issue-confirmations',issue.id]});},onSettled:()=>qc.invalidateQueries({queryKey:['issues']})});
+  const submitComment=async(e:React.FormEvent)=>{e.preventDefault();setUploading(true);setError('');try{const attachments=[];for(const file of files) attachments.push(await uploadMedia(file));await fetchApi(`/issues/${issue.id}/comments`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment,attachments,parent_comment_id:replyTo||undefined})});setComment('');setFiles([]);setReplyTo(null);await qc.invalidateQueries({queryKey:['issue-comments',issue.id]});await qc.invalidateQueries({queryKey:['issues']});onToast('Comment added to the complaint.');}catch(err){setError(err instanceof Error?err.message:'Comment could not be submitted.');}finally{setUploading(false);}};
+  return <div className="community-actions"><div className="community-status-row"><span className={`community-status ${issue.official_verification==='Verified'?'official':issue.official_verification==='Rejected'?'rejected':issue.community_corroborated?'corroborated':'submitted'}`}>{issue.official_verification==='Verified'?'Officially Verified':issue.official_verification==='Rejected'?'Rejected':issue.community_corroborated?'Community Corroborated':issue.status||'Submitted'}</span>{issue.department&&<small>{issue.department}</small>}</div><button className={`community-confirm ${issue.confirmed_by_me?'active':''}`} disabled={confirmation.isPending} onClick={()=>confirmation.mutate()}><Heart size={16} fill={issue.confirmed_by_me?'currentColor':'none'}/>{issue.confirmed_by_me?'YOU EXPERIENCED THIS TOO':'I EXPERIENCED THIS TOO'}</button><div className="community-links"><button onClick={()=>{setOpen(v=>!v);}}>{issue.confirmation_count||0} {issue.confirmation_count===1?'citizen':'citizens'} experienced this</button><button onClick={()=>setOpen(v=>!v)}>{discussion.length||issue.comment_count||0} comments · {open?'Hide discussion':'View discussion'}</button></div>{issue.community_corroborated&&<small className="community-corroborated-note"><BadgeCheck size={13}/> Residents have independently confirmed this issue.</small>}{open&&<section className="community-discussion"><strong>Community discussion</strong>{confirmations?.citizens?.length>0&&<p className="community-residents">Confirmed by {confirmations.citizens.length} residents · identities remain private</p>}{discussion.map((c:any)=><article className="community-comment" key={c.id}><p>{c.comment}</p><small>{formatDate(c.created_at)}</small><IssueEvidence items={c.evidence||[]}/><button className="comment-report" onClick={()=>setReplyTo(c.id)}>Reply</button><button className="comment-report" onClick={async()=>{try{await fetchApi(`/issues/${issue.id}/comments/${c.id}/report`,{method:'POST'});onToast('Comment reported for review.');}catch{onToast('Could not report comment.');}}}>Report</button></article>)}{discussion.length===0&&<p className="community-residents">Be the first to add useful context.</p>}<form onSubmit={submitComment}>{replyTo&&<small>Replying to a community comment <button type="button" onClick={()=>setReplyTo(null)}>Cancel</button></small>}<textarea value={comment} onChange={e=>setComment(e.target.value)} minLength={3} maxLength={2000} placeholder="Share what you experienced…" required/><EvidencePicker files={files} onChange={setFiles} disabled={uploading}/>{error&&<small className="login-error-alert">{error}</small>}<button className="community-comment-submit" disabled={uploading}>{uploading?'Posting…':'Post comment'}</button></form></section>}</div>;
+}
+
+function IssueEvidence({ items }: { items: { media_id: number; media_type: string; filename: string; url: string }[] }) {
+  if (!items.length) return null;
+  return <div className="issue-evidence-list" aria-label="Attached issue evidence">
+    {items.map(item => <div className="issue-evidence-item" key={item.media_id}>
+      {item.media_type === 'image' ? <a href={item.url} target="_blank" rel="noreferrer" aria-label={`Open image evidence ${item.filename}`}><img src={item.url} alt={`Evidence for issue: ${item.filename}`} loading="lazy" /></a>
+        : item.media_type === 'audio' ? <audio controls preload="none" src={item.url} aria-label={`Audio evidence ${item.filename}`} />
+        : <video controls playsInline preload="metadata" src={item.url} aria-label={`Video evidence ${item.filename}`} />}
+      <span>{item.filename}</span>
+    </div>)}
+  </div>;
+}
+
+function uploadMedia(file: File, onProgress?: (percent: number) => void): Promise<UploadedEvidence> {
+  const mediaType = file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio' : file.type.startsWith('video/') ? 'video' : '';
+  if (!mediaType) return Promise.reject(new Error('Choose an image, audio, or video file.'));
+  return new Promise((resolve, reject) => {
+    const body = new FormData();
+    body.append('file', file, file.name);
+    body.append('media_type', mediaType);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API}/media/upload`);
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { reject(new Error('The upload response was invalid. Please retry.')); }
+      } else {
+        let message = `Upload failed (${xhr.status}).`;
+        try { const detail = JSON.parse(xhr.responseText).detail; if (detail) message = detail; } catch { /* keep status message */ }
+        reject(new Error(message));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Network error while uploading evidence. Please retry.'));
+    xhr.onabort = () => reject(new Error('Evidence upload was canceled.'));
+    const token = localStorage.getItem('utopia_token') || localStorage.getItem('civicgrid_token');
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.send(body);
+  });
+}
+
+function EvidencePicker({ files, onChange, onTranscript, disabled = false }: { files: File[]; onChange: (files: File[]) => void; onTranscript?: (transcript: string) => void; disabled?: boolean }) {
+  const [error, setError] = useState('');
+  const [transcriptionNotice, setTranscriptionNotice] = useState('');
+  const [transcribing, setTranscribing] = useState(false);
+  const [recording, setRecording] = useState<'audio' | 'video' | null>(null);
+  const [frontCamera, setFrontCamera] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
+  const previewRef = useRef<HTMLVideoElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+
+  useEffect(() => {
+    const next = files.map(file => URL.createObjectURL(file));
+    setPreviewUrls(next);
+    return () => next.forEach(URL.revokeObjectURL);
+  }, [files]);
+  useEffect(() => {
+    if (!recording) return;
+    const interval = window.setInterval(() => setRecordSeconds(value => value + 1), 1000);
+    return () => window.clearInterval(interval);
+  }, [recording]);
+  useEffect(() => {
+    if (previewRef.current && previewStream) previewRef.current.srcObject = previewStream;
+  }, [previewStream]);
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+  }, []);
+
+  const addFiles = (picked: FileList | File[] | null) => {
+    if (!picked?.length) return;
+    setError('');
+    const next = [...files];
+    const incoming = Array.isArray(picked) ? picked : Array.from(picked);
+    for (const file of incoming) {
+      if (next.length >= 5) { setError('You can attach up to 5 files.'); break; }
+      const type = file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio' : file.type.startsWith('video/') ? 'video' : '';
+      const cap = type === 'image' ? 10 : type === 'audio' ? 20 : type === 'video' ? 50 : 0;
+      if (!type) { setError(`${file.name}: choose an image, audio, or video file.`); continue; }
+      if (file.size === 0) { setError(`${file.name}: the file is empty.`); continue; }
+      if (file.size > cap * 1024 * 1024) { setError(`${file.name}: maximum size is ${cap} MB.`); continue; }
+      next.push(file);
+    }
+    onChange(next);
+  };
+
+  const transcribeRecording = async (file: File) => {
+    if (!onTranscript) return;
+    setTranscribing(true);
+    setTranscriptionNotice('Transcribing your recording…');
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const result = await fetchApi<{ text: string }>('/ai/transcribe', { method: 'POST', body: form });
+      if (result.text?.trim()) {
+        onTranscript(result.text.trim());
+        setTranscriptionNotice('Transcript added to the text field. You can review or edit it.');
+      } else {
+        setTranscriptionNotice('No speech was recognized. Your audio recording is still attached.');
+      }
+    } catch {
+      setTranscriptionNotice('Transcription failed. Your audio recording is still attached; please try again or type your message.');
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const startRecording = async (kind: 'audio' | 'video') => {
+    setError('');
+    setTranscriptionNotice('');
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setError('This browser does not support recording. You can still choose an existing file.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(kind === 'audio' ? { audio: true } : { audio: true, video: { facingMode: { ideal: 'environment' } } });
+      streamRef.current = stream;
+      if (kind === 'video') setFrontCamera(false);
+      setPreviewStream(stream);
+      const types = kind === 'audio'
+        ? ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm', 'audio/ogg']
+        : ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+      const mimeType = types.find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      chunksRef.current = [];
+      recorder.ondataavailable = event => { if (event.data.size) chunksRef.current.push(event.data); };
+      recorder.onerror = () => setError('Recording failed. Please try again or select a file.');
+      recorder.onstop = () => {
+        stream.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+        setPreviewStream(null);
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || (kind === 'audio' ? 'audio/webm' : 'video/webm') });
+        if (!blob.size) { setError('The recording was empty. Please record again.'); return; }
+        const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? (kind === 'audio' ? 'm4a' : 'mp4') : 'webm';
+        const recordingFile = new File([blob], `utopia-${kind}-${Date.now()}.${ext}`, { type: blob.type });
+        addFiles([recordingFile]);
+        if (kind === 'audio' && onTranscript) void transcribeRecording(recordingFile);
+        setRecording(null);
+      };
+      recorderRef.current = recorder;
+      recorder.start(250);
+      setRecordSeconds(0);
+      setRecording(kind);
+    } catch (e) {
+      setPreviewStream(null);
+      setError(e instanceof DOMException && e.name === 'NotAllowedError'
+        ? 'Camera or microphone permission was denied. Allow access in your browser settings or choose an existing file.'
+        : 'Camera or microphone could not be opened. Check that a device is available, or choose an existing file.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+  };
+  const switchCamera = async () => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    try {
+      await track.applyConstraints({ facingMode: { ideal: frontCamera ? 'environment' : 'user' } });
+      setFrontCamera(value => !value);
+    } catch {
+      setError('This browser cannot switch cameras while recording. Stop and start a new video capture instead.');
+    }
+  };
+
+  return (
+    <section className="evidence-picker" aria-label="Attach evidence">
+      <strong>Attach Evidence (Optional)</strong>
+      <div className="evidence-actions">
+        <label className="evidence-action"><ImageIcon size={15} /> Upload Image<input aria-label="Upload image evidence" type="file" accept="image/*" multiple disabled={disabled || !!recording || transcribing} onChange={e => { addFiles(e.target.files); e.currentTarget.value = ''; }} /></label>
+        <label className="evidence-action"><Mic size={15} /> Upload Audio<input aria-label="Upload audio evidence" type="file" accept="audio/*" disabled={disabled || !!recording || transcribing} onChange={e => { addFiles(e.target.files); e.currentTarget.value = ''; }} /></label>
+        <label className="evidence-action"><Video size={15} /> Upload Video<input aria-label="Upload video evidence" type="file" accept="video/*" disabled={disabled || !!recording || transcribing} onChange={e => { addFiles(e.target.files); e.currentTarget.value = ''; }} /></label>
+        <label className="evidence-action"><Camera size={15} /> Take Photo<input aria-label="Capture a photo" type="file" accept="image/*" capture="environment" disabled={disabled || !!recording || transcribing} onChange={e => { addFiles(e.target.files); e.currentTarget.value = ''; }} /></label>
+        {recording ? <>
+          <button type="button" className="evidence-action recording" onClick={stopRecording}><Square size={14} /> Stop {recording} · {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, '0')}</button>
+          {recording === 'video' && <button type="button" className="evidence-action" onClick={() => void switchCamera()}><RotateCcw size={14} /> Switch camera</button>}
+        </> : <>
+          <button type="button" className="evidence-action" disabled={disabled || transcribing || files.length >= 5} onClick={() => void startRecording('audio')}><Mic size={15} /> Record Audio</button>
+          <button type="button" className="evidence-action" disabled={disabled || transcribing || files.length >= 5} onClick={() => void startRecording('video')}><Video size={15} /> Record Video</button>
+        </>}
+      </div>
+      {previewStream && <video ref={previewRef} autoPlay muted playsInline className="evidence-live-preview" aria-label="Camera preview" />}
+      {error && <p className="media-error" role="alert">{error}</p>}
+      {transcribing && <small role="status">Transcribing audio…</small>}
+      {transcriptionNotice && <small role="status">{transcriptionNotice}</small>}
+      {!!files.length && <div className="evidence-file-list">{files.map((file, index) => {
+        const url = previewUrls[index];
+        return <div className="evidence-file" key={`${file.name}-${index}`}>
+          {file.type.startsWith('image/') ? <img src={url} alt={`Preview of ${file.name}`} /> : file.type.startsWith('audio/') ? <audio src={url} controls aria-label={`Preview ${file.name}`} /> : <video src={url} controls playsInline aria-label={`Preview ${file.name}`} />}
+          <span>{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB · {file.type}</span>
+          <button type="button" aria-label={`Remove ${file.name}`} disabled={disabled} onClick={() => onChange(files.filter((_, i) => i !== index))}><Trash2 size={15} /></button>
+        </div>;
+      })}</div>}
+      <small>Up to 5 files · images 10 MB · audio 20 MB · video 50 MB each. Recorded audio is sent to Groq for transcription; provider usage charges may apply.</small>
+    </section>
   );
 }

@@ -30,6 +30,16 @@ services:
       NOMINATIM_BASE_URL: ${NOMINATIM_BASE_URL:-https://nominatim.openstreetmap.org}
       NOMINATIM_USER_AGENT: ${NOMINATIM_USER_AGENT:-UtopiaMunicipalPlatform/3.0}
       UVICORN_RELOAD: ${UVICORN_RELOAD:-0}
+      MEDIA_STORAGE_DIR: /app/uploads
+      MEDIA_MAX_IMAGE_BYTES: ${MEDIA_MAX_IMAGE_BYTES:-10485760}
+      MEDIA_MAX_AUDIO_BYTES: ${MEDIA_MAX_AUDIO_BYTES:-20971520}
+      MEDIA_MAX_VIDEO_BYTES: ${MEDIA_MAX_VIDEO_BYTES:-52428800}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      AI_API_BASE_URL: ${AI_API_BASE_URL:-https://api.openai.com/v1}
+      AI_TRANSCRIPTION_MODEL: ${AI_TRANSCRIPTION_MODEL:-whisper-large-v3-turbo}
+      AI_REQUEST_TIMEOUT: ${AI_REQUEST_TIMEOUT:-12}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-500}
     command:
       - sh
       - -c
@@ -51,6 +61,8 @@ services:
       retries: 5
       start_period: 20s
     restart: unless-stopped
+    volumes:
+      - media_uploads:/app/uploads
     develop:
       watch:
         - action: sync+restart
@@ -80,3 +92,4 @@ services:
 
 volumes:
   pgdata:
+  media_uploads:

@@ -1,5 +1,10 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
+from typing import Annotated
+
+class MediaAttachmentRef(BaseModel):
+    media_id: int = Field(gt=0)
+    upload_token: Annotated[str, StringConstraints(min_length=32, max_length=128)]
 
 class IssueIn(BaseModel):
     project_id: Optional[int] = None
@@ -13,6 +18,7 @@ class IssueIn(BaseModel):
     pincode: Optional[str] = None
     is_question: Optional[bool] = False
     intimated_in_advance: Optional[bool] = False
+    attachments: list[MediaAttachmentRef] = Field(default_factory=list, max_length=5)
 
 class IssueReplyIn(BaseModel):
     reply: str

@@ -9,6 +9,8 @@ from ..models.field import FieldSubmission
 from ..schemas.field import FieldSubmissionIn
 from ..schemas.project import serialize_project
 from ..services.auth import get_current_user
+from ..models.contractor import Contractor, ContractorScore, ContractorScoringRule
+from .contractors import create_transaction
 
 router = APIRouter(prefix="/api/onsite", tags=["On-site Official Portal"])
 
@@ -71,6 +73,7 @@ def create_field_submission(sub: FieldSubmissionIn, user: dict = Depends(get_cur
 
     # Sync project progress and timeline
     if sub.report_type == 'progress':
+        was_completed = proj.status == 'Completed'
         if sub.progress_pct is not None:
             proj.progress = max(0, min(100, sub.progress_pct))
             if proj.progress >= 100:
@@ -90,6 +93,12 @@ def create_field_submission(sub: FieldSubmissionIn, user: dict = Depends(get_cur
         )
         s.add(ev)
         proj.updated = datetime.utcnow()
+        if not was_completed and proj.status == 'Completed' and proj.contractor_id:
+            deadline=proj.revised_date or proj.due_date
+            event_type='early_completion' if proj.updated.date()<deadline else 'on_time_completion'
+            rule=s.query(ContractorScoringRule).filter_by(event_type=event_type,is_active=True).first()
+            if rule:
+                create_transaction(s,s.get(Contractor,proj.contractor_id),event_type,f'project-completion:{proj.id}',rule.points,rule.description,user.get('name','Field Supervisor'),proj.id)
     elif sub.report_type == 'delay':
         proj.status = 'Delayed'
         if sub.detail:

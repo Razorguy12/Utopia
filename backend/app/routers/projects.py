@@ -7,6 +7,8 @@ from ..models.project import Project, Event
 from ..models.issue import Issue
 from ..schemas.project import ProjectCreateIn, ProjectUpdateIn, serialize_project
 from ..services.auth import get_current_user
+from ..models.contractor import Contractor, ContractorScore, ContractorScoringRule
+from .contractors import create_transaction
 
 router = APIRouter(prefix="/api", tags=["Projects & Municipal Works"])
 
@@ -113,7 +115,12 @@ def get_project(pid: int, s: Session = Depends(get_db)):
             'status': i.status, 'severity': i.severity, 'created': i.created.isoformat(),
             'is_question': i.is_question, 'official_reply': i.official_reply,
             'replied_at': i.replied_at.isoformat() if i.replied_at else None,
-            'replied_by': i.replied_by
+            'replied_by': i.replied_by,
+            'attachments': [{
+                'media_id': m.id, 'media_type': m.media_type, 'mime_type': m.mime_type,
+                'filename': m.original_filename, 'size': m.file_size, 'url': f'/api/media/{m.id}',
+                'created_at': m.created_at.isoformat()
+            } for m in i.attachments]
         }
         for i in issues
     ]
@@ -165,6 +172,14 @@ def create_project(data: ProjectCreateIn, user: dict = Depends(get_current_user)
         created_by=f"{user.get('name')} ({user.get('badge_id')})"
     )
     s.add(proj)
+    s.flush()
+    contractor = None
+    if proj.contractor.strip().lower() not in {'pending tender award','unassigned','tbd','none'}:
+        contractor = s.query(Contractor).filter_by(name=proj.contractor, department=proj.department).first()
+        if not contractor:
+            contractor = Contractor(name=proj.contractor, department=proj.department, registration_number=f'GCC-C-{proj.id:06d}')
+            s.add(contractor); s.flush(); s.add(ContractorScore(contractor_id=contractor.id,current_score=100,current_grade='A+'))
+        proj.contractor_id = contractor.id
     s.commit()
     s.refresh(proj)
 
@@ -196,10 +211,26 @@ def update_project(pid: int, update_data: ProjectUpdateIn, user: dict = Depends(
             )
 
     data = update_data.model_dump(exclude_unset=True)
+    old_status = p.status
     for field, val in data.items():
         if hasattr(p, field):
             setattr(p, field, val)
     p.updated = datetime.utcnow()
+    if data.get('contractor') and p.contractor:
+        if p.contractor.strip().lower() in {'pending tender award','unassigned','tbd','none'}:
+            p.contractor_id = None
+        else:
+            contractor = s.query(Contractor).filter_by(name=p.contractor, department=p.department).first()
+            if not contractor:
+                contractor = Contractor(name=p.contractor, department=p.department, registration_number=f'GCC-C-{p.id:06d}')
+                s.add(contractor); s.flush(); s.add(ContractorScore(contractor_id=contractor.id,current_score=100,current_grade='A+'))
+            p.contractor_id = contractor.id
+    if data.get('status') == 'Completed' and old_status != 'Completed' and p.contractor_id:
+        deadline = p.revised_date or p.due_date
+        event_type = 'early_completion' if p.updated.date() < deadline else 'on_time_completion'
+        rule = s.query(ContractorScoringRule).filter_by(event_type=event_type,is_active=True).first()
+        if rule:
+            create_transaction(s,s.get(Contractor,p.contractor_id),event_type,f'project-completion:{p.id}',rule.points,rule.description,user.get('name','Officer'),p.id)
     s.commit()
     s.refresh(p)
     return serialize_project(p)

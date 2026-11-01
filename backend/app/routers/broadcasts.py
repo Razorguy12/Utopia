@@ -21,7 +21,9 @@ def broadcast_whatsapp_advisory(payload: WhatsAppBroadcastIn, user: dict = Depen
     
     # Store broadcast record in database
     log = SMSLog(
-        phone=f"ALL_ACTIVE_PINS_{pin}",
+        # SMSLog.phone has a bounded VARCHAR intended for destination values;
+        # this marker represents a PIN-scoped audience, not a phone number.
+        phone=f"PIN:{pin}",
         pincode=pin,
         message=f"[{user.get('department', 'Municipal Corporation')} Advisory]: {payload.message}"
     )

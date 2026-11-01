@@ -55,5 +55,6 @@ def test_startup_initializes_and_seeds(monkeypatch):
     monkeypatch.setattr(main, "ensure_columns", lambda engine: calls.append("migrate"))
     monkeypatch.setattr(main, "SessionLocal", SeedSession)
     monkeypatch.setattr(main, "seed_data", lambda session: calls.append("seed"))
+    monkeypatch.setattr(main, "cleanup_staged_media", lambda session: calls.append("cleanup"))
     main.on_startup()
-    assert calls == ["create", "migrate", "seed"]
+    assert calls == ["create", "migrate", "cleanup", "seed"]

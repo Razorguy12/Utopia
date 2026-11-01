@@ -90,6 +90,9 @@ def client(db_session, monkeypatch):
         def post(self, url, **kwargs):
             return self.request("POST", url, **kwargs)
 
+        def delete(self, url, **kwargs):
+            return self.request("DELETE", url, **kwargs)
+
         def patch(self, url, **kwargs):
             return self.request("PATCH", url, **kwargs)
 

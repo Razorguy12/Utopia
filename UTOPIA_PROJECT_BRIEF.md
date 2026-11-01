@@ -1,0 +1,344 @@
+# UTOPIA — COMPLETE PROJECT BRIEF FOR AI HANDOFF
+
+## CURRENT IMPLEMENTATION ADDENDUM (2026-11-01)
+This addendum records features added after the original brief was written and takes precedence over older contradictory statements below. The source code remains authoritative; inspect it before making assumptions. The file available in this repository is named UTOPIA_PROJECT_BRIEF.txt (the filename is not `utpia_bref_project.txt`).
+
+PROJECT TEAM / ATTRIBUTION
+- Utopia was developed by Team Lazarus, a group of students from IIITDM Kancheepuram.
+- The About page displays this attribution. Utopia AI answers developer questions with this fact.
+- Individual Team Lazarus member names are designated as classified information in the product behavior. The assistant must not disclose or invent them.
+
+UTOPIA AI CHAT ASSISTANT
+- A floating, responsive citizen chat panel is implemented in frontend/src/App.tsx and styled in frontend/src/style.css. It has a welcome, suggested prompts, timestamps, separate speaker bubbles, loading/retry/error states, clear conversation, sources, and browser location sharing.
+- POST /api/ai/chat accepts a message, optional conversation ID/location, and up to eight context turns. The response contains conversation_id, answer, source references, and suggested questions. Context is submitted by the client and is never a factual authority.
+- Factual Utopia questions run SQL-backed retrieval against current public Project/Event/Issue data (not a vector database). Retrieval supports project codes, PINs, localities, status, disruptions, milestones, delays, budgets, public grievance references, departments, and approximate coordinate proximity. Responses carry source references. Private citizen contact details and internal notes are excluded; project contacts are filtered unless explicitly asked for.
+- The assistant uses deterministic database-grounded responses when records match and an optional server-side OpenAI-compatible provider for grounded phrasing. It must not invent Utopia facts. Unknown municipal facts receive an explicit no-records answer. Current location is only used for civic retrieval, not unrelated questions.
+- Greetings/thanks/goodbyes have local responses. Non-Utopia general questions use the configured LLM provider, with no database records passed as facts. The general prompt says the model has no live web/weather/news access, so it must not claim live conditions. A configured provider is needed for general knowledge responses.
+- Team Lazarus attribution is returned directly by the API for developer/team questions. Individual names are reported as classified, and no names are fabricated.
+- Conversation context is client-side for the active chat session; there is no durable conversation-history table. The backend applies an in-memory limit of 20 chat/transcription requests per IP per minute.
+- Prompts and provider logic live in backend/app/services/ai_provider.py. Query classification, rate limiting, source serialization, chat and transcription routes live in backend/app/routers/ai_chat.py. SQL retrieval and deterministic response construction live in backend/app/services/ai_retrieval.py.
+
+GENERAL AI PROVIDER CONFIGURATION
+- The key is server-only in the ignored project-root `.env`; never put it in Vite/frontend variables or commit it.
+- Supported settings: AI_API_KEY, AI_API_BASE_URL, AI_MODEL, AI_TRANSCRIPTION_MODEL, AI_REQUEST_TIMEOUT, AI_MAX_TOKENS.
+- Current local configuration uses Groq's OpenAI-compatible base URL (`https://api.groq.com/openai/v1`) with `openai/gpt-oss-120b` for chat; speech transcription defaults to `whisper-large-v3-turbo`. These are settings, not hard-coded provider requirements.
+- Chat and transcription requests use a non-default User-Agent because Groq's edge rejected Python's default urllib User-Agent in this environment. If changing providers, verify endpoint, model availability, request formats, and rate limits.
+- If no key is configured, greetings and SQL/deterministic Utopia answers can still work; general answers and audio transcription cannot.
+
+MULTIMEDIA EVIDENCE AND SPEECH TRANSCRIPTION
+- The same EvidencePicker component is used in the citizen grievance form and Utopia AI chat. It accepts multiple image/audio/video files, camera capture, live audio/video recording, previews, removal, size/type checks, and recording timers. Text-only issue submission remains supported.
+- POST /api/media/upload stages validated bytes in persistent local storage outside the static web root. Filenames are generated UUIDs. The response includes media_id and one-time upload_token. POST /api/issues associates staged attachments during issue creation; it uses the existing Issue system, not a separate grievance database. Canceled staged uploads are cleaned after 24 hours by startup cleanup.
+- Default per-file limits: image 10 MiB, audio 20 MiB, video 50 MiB; maximum five attachments per issue. Media types/extensions/signatures are validated server-side. GET /api/media/{id} serves only a known, issue-associated attachment; arbitrary paths are never exposed. Images render as images, audio as an audio player, and videos as video players in issue details/feed.
+- MediaAttachment rows store UUID, optional issue_id, upload-token hash, original/stored filename, internal storage path, media type/MIME, size, and timestamp. The Issue has a one-to-many attachments relationship. Migration: backend/migrations/0001_media_attachments.sql. API startup also creates missing metadata tables and applies legacy compatibility columns; do not assume create_all alone is the documented migration strategy.
+- Live audio recording is transcribed after the citizen stops recording. The browser sends the recording to POST /api/ai/transcribe, and the backend relays it to the configured provider's speech-to-text endpoint using AI_TRANSCRIPTION_MODEL. Transcribed text is inserted into the relevant issue description or chat textbox, where the citizen can review/edit it. The audio remains available as evidence. The transcription endpoint does not save a second file; if the citizen later submits the grievance, normal media upload/association persists the evidence.
+- Transcription accepts supported audio formats up to the configured 20 MiB audio limit, checks MIME/extension/signature, and returns `{ "text": "..." }`. It is multilingual when using the configured Whisper model; do not assume a language unless the request supplies it. If transcription fails, the attachment is retained client-side and the UI asks the citizen to retry or type.
+- Recording audio and sending it for transcription are separate operations. The UI discloses that audio is sent to Groq/provider for processing and that provider charges may apply. Uploaded audio not recorded through this live flow is evidence only; it is not automatically transcribed. Images/videos are not analyzed by the chatbot, and no person/location/infrastructure recognition is implemented.
+- Chat issue reporting collects issue type, description, locality/PIN and optional contact, displays a summary, and waits for explicit citizen confirmation before POST /api/issues. It displays the actual backend reference only after success. Uploaded chat attachments are associated through the same staged media and issue workflow.
+
+CURRENT LOCAL DATA / RUNTIME SNAPSHOT
+- The separate no-Docker local PostgreSQL data directory is `.utopia/postgres` on port 55432. At the time of this update it contains demo data (17 projects, 8 issues, 62 events). This is separate from the Docker Compose `pgdata` volume; do not assume these databases are interchangeable.
+- The local development UI/API were last run at http://localhost:5174 and http://localhost:8001 (Swagger at /docs). These processes may stop when the working session ends. `./run-utopia.sh` is the local launcher. Docker Compose uses its own PostgreSQL volume and service configuration.
+- The seeded/demo content is illustrative, not verified live GCC data. Seed date is fixed in backend/app/services/seeder.py. Do not present it as official current government information.
+
+## END OF CURRENT IMPLEMENTATION ADDENDUM
+
+## PURPOSE
+Utopia is a civic works transparency and municipal operations web application built around Greater Chennai Corporation (GCC). It connects four kinds of users and information:
+
+1. Residents discover public works near a Chennai locality, see progress and disruptions, ask questions, and file grievances.
+2. Department officers register and operate works for their own utility department, coordinate with other departments, and respond to citizen submissions.
+3. On-site supervisors send field progress, photo references, blockers, shift logs, and delay reports.
+4. Municipal administrators oversee citywide works, triage grievances, arbitrate corridor conflicts, and publish advisory records.
+
+The central record is a public-works Project. Its location, PIN code, schedule, status, percentage progress, seven-stage milestone, disruption advice, contacts, and event history appear across the citizen and official portals. The application is a prototype/demo-oriented operational system: some outward-facing capabilities are represented as stored records and UI indicators, not as live integrations with traffic navigation, WhatsApp, SMS, or GIS systems. Implementation details and limitations are documented at the end of this brief.
+
+## PRODUCT VOCABULARY
+- GCC: Greater Chennai Corporation.
+- CMWSSB / Metro Water: Chennai Metro Water utility.
+- TANGEDCO: electricity utility.
+- PIN: six-digit Indian postal code, used to select and group local works.
+- DigSync: Utopia's interdepartmental project-collision and conflict workflow.
+- Project: a capital public-works job such as drainage, water, roads, electricity, or fibre work.
+- Event: a dated entry in a project's public/official work timeline.
+- Issue: either a citizen grievance or a question, routed to a responsible department.
+- Field submission: an on-site report linked to a project and submitting officer.
+- Conflict ticket: a request for municipal arbitration when departments have overlapping work.
+
+## TECHNICAL STRUCTURE
+Frontend:
+- React + TypeScript + Vite SPA in frontend/.
+- Most views, route selection, state, UI, data types, and API calls are concentrated in frontend/src/App.tsx; styling is in frontend/src/style.css.
+- React Query handles fetched data, caching, invalidation after mutations, and loading/refetch patterns. React Leaflet and Leaflet render the map. lucide-react supplies icons; Recharts is available for charts.
+- Browser paths are selected through conditional pathname logic in App.tsx even though BrowserRouter is mounted.
+- fetchApi() prefixes requests with VITE_API_URL when configured, otherwise uses same-origin /api; it attaches the saved bearer token from localStorage.
+
+Backend:
+- FastAPI + SQLAlchemy + Pydantic in backend/app/.
+- backend/app/main.py registers routers, applies CORS, creates tables at startup, applies compatibility column additions, seeds the database, and provides health/root endpoints.
+- Routers implement HTTP endpoints; schemas validate inputs; SQLAlchemy models hold persisted records; services implement authentication, DigSync, geocoding, and demo seeding.
+- PostgreSQL is the only supported database. The connection must use psycopg (driver name postgresql+psycopg). JWT_SECRET must be at least 32 characters.
+
+Normal Docker Compose architecture (compose.yml):
+- db: PostgreSQL/PostGIS image, database civicgrid, persistent pgdata volume.
+- api: FastAPI on container port 8001.
+- web: production Nginx serving the built SPA, normally on host port 5174; API normally on host port 8001.
+- Nginx proxies /api to the API. Compose healthchecks order db → API → web.
+- Frontend dev mode uses Vite and proxies /api to API_PROXY_TARGET (default http://127.0.0.1:8001).
+
+Local no-Docker launcher:
+- run-utopia.sh starts a local PostgreSQL cluster in .utopia/postgres on port 55432, ensures civicgrid role/database, ensures backend Python environment and dependencies, and runs Vite plus Uvicorn.
+- Default local URLs are http://localhost:5174 and http://localhost:8001/docs.
+- .utopia is ignored by Git; it contains local DB state, logs, and uv cache. The repo .env is also ignored and contains DB/JWT secrets.
+
+## FRONTEND ROUTES AND EXPERIENCES
+PUBLIC RESIDENT PORTAL — / and /citizen
+1. Entry/locality selection:
+   - Search a six-digit PIN directly or a locality name; choose a locality card populated from /api/localities.
+   - Cards show registered work count, active count, and delayed count.
+   - Popular/demo areas include Melakottaiyur 600127, Triplicane 600005, Ayanavaram 600023, T. Nagar 600017, Mylapore 600004, plus other seeded areas.
+   - “Use my current location” invokes the browser Geolocation API. It needs browser permission and a secure origin (HTTPS or localhost); coordinates are reverse-geocoded.
+   - Locality/PIN is carried in query parameters. Residents can switch between map, information dashboard, and about views and change locality.
+2. Map discovery:
+   - Leaflet map centered on Chennai with project markers; the marker presentation varies by project category/status and selection.
+   - Street and satellite tile layers are available. Map click/location handling can select a point, and selected projects are brought into view with map controller behavior.
+   - Category filters include drainage, water supply, roads, electricity, telecom, and delayed works; there is also a road-closure-only filter.
+   - Search covers project title, code, description, locality, and address through the projects API.
+   - Marker/project selection opens a detailed inspection/place sheet and map pan.
+3. Project information/details:
+   - Work title/code, department/category, location/address/PIN, description, status, percentage, seven-stage milestone, budget, contractor, dates, and coordinates.
+   - Delayed projects can show the recorded reason, mitigation, and original/revised target date.
+   - Disruption description, lane/road access information, detour recommendation, permitted noise/dust text, and navigation-broadcast flag.
+   - GCC engineer name, phone and email; contractor/supervisor and phone; municipal grievance helpline information in the product presentation.
+   - Event timeline lists recorded milestone/field/official events and whether marked verified.
+   - Community questions and grievances can be displayed with reference, status, severity, reply, and reply author/time.
+4. Seven project stages (the labels and progress mapping):
+   1 Sanction & DPR Published — administrative/technical sanction (nominal 10%).
+   2 Tender & Site Mobilisation — work order and survey (25%).
+   3 Utility Shifting & Excavation — barriers and trench excavation (45%).
+   4 Core Conduit / Pipe Laying — installation/jointing (65%).
+   5 Quality & Compaction Audit — pressure/compaction tests (80%).
+   6 Road Surface Restoration — resurfacing (92%).
+   7 Commissioned & Reopened — final audit and road reopening (100%).
+   The exact progress can also be set separately; milestone and percentage are related but are separate fields.
+5. Citizen question and grievance workflow:
+   - Forms can be associated with the selected project or locality/PIN and route to a target department.
+   - Choices cover excessive noise, excessive dust, project delay inquiry, missing barricades/open trench, road access blockage, water interruption, power/cable disruption, and other construction grievance. Questions are supported as a distinct issue type.
+   - A citizen can describe the issue and indicate whether the department gave advance notice; backend also accepts contact phone/email.
+   - Submit creates a persistent issue with CGI or Q-style reference, initial Submitted status, severity and routing metadata. Detail must contain at least eight characters in the current modal.
+   - Citizen can see official replies after officers publish them.
+   - Open issues become “escalated” after three elapsed days. This is calculated when issues are fetched; no background scheduler is shown.
+6. Information dashboard and About page:
+   - Separate public information view summarizes city/locality public works and stats, while the map remains another exploration mode.
+   - About view provides a product/context explanation, identifies Team Lazarus (students from IIITDM Kancheepuram) as the developers, and navigates back to the map.
+7. Responsive layouts include desktop navigation and a mobile bottom navigation; toast messages communicate login and action results.
+8. Utopia AI chat:
+   - Floating assistant supports general conversation and database-grounded questions about Utopia projects, disruptions, and public grievances. It shows source references and only uses browser location for relevant civic queries.
+   - Chat can collect multimedia evidence and guide a citizen through a grievance summary and explicit confirmation before submitting through the existing issue workflow.
+9. Multimedia issue evidence:
+   - The citizen grievance form and AI chat accept multiple image/audio/video files, capture photos, and record audio/video with previews/removal. Recorded audio is sent to the configured speech service after recording stops; the transcript is inserted into the active description/message textbox.
+   - The audio remains an attachment. Users can edit the transcript before sending/submitting. Provider/browser failures leave the recorded evidence available and show a useful notice.
+
+## AUTHENTICATION AND DEMO ROLES
+Login selection is at /login. Role-specific login screens are /municipality/login, /department/login, and /onsite/login.
+
+Backend demo accounts are hardcoded in backend/app/config.py (these are demo credentials, not secure production identity management):
+- Municipality admin: admin@gcc.gov.in / admin123; badge GCC-ENG-0842; department Greater Chennai Corporation.
+- Metro Water officer: water@metrowater.tn.gov.in / water123; badge CMW-DIV-0219.
+- Roads officer: roads@gcc.gov.in / roads123; badge GCC-RD-0155.
+- Power officer: power@tangedco.gov.in / power123; badge TNEB-ZN-3310.
+- Drainage officer: drainage@gcc.gov.in / drain123; badge SWD-ZN-0418.
+- Field supervisor: field.gcc@chennai.gov.in / field123; badge GCC-FIELD-552.
+- Additional field accounts exist for Water (field.water@metrowater.tn.gov.in / field123) and Power (field.power@tangedco.gov.in / field123).
+- Login accepts the email, badge, or configured alias plus password; department validation is applied when the login request supplies a department.
+- Successful login returns a JWT bearer token and user identity/role/department/designation/badge. Frontend stores token/user in localStorage using utopia_* keys and also reads legacy civicgrid_* token keys.
+- Roles are admin, official, and onsite. Backend authorization is the security boundary; frontend visibility alone is not authorization.
+- Admin goes to municipal dashboard, official to department dashboard, onsite to field dashboard. There is a logout flow.
+
+## MUNICIPALITY / CITYWIDE ADMIN PORTAL
+Aliases: /admin, /municipal, /municipality/dashboard. Main tabs:
+1. Status Explorer:
+   - Citywide KPI cards for in-progress, completed, delayed, scheduled/upcoming, and all projects; budget and grievance totals are also presented in dashboard summaries.
+   - Filter by status, department, and search across title/address/PIN/code.
+   - Open each project detail, inspect its work data and locality issues, and edit operational details.
+2. DigSync:
+   - View cross-department corridor/schedule collisions returned by /api/digsync.
+   - Compare two works, departments, distance, overlap interval, status, and conflict rationale/severity.
+   - View conflict tickets, select which department may proceed, record the municipal decision/rationale, and trigger status changes for the winning/losing projects.
+3. Project register and updates:
+   - Browse all works, department filter, edit project via operations modal.
+   - Modify status, percentage, seven-stage current_step, revised completion date, delay reason/mitigation, engineer and contractor contact fields, permitted noise/dust windows, navigation-broadcast boolean, detour advice, technical scope, and funding program.
+   - Project detail may show timeline, contacts, disruption/environmental data, events, and related issues; officials can reply to unanswered submissions from there.
+4. Grievances:
+   - Filter by department, questions vs grievances, escalated, answered/resolved; search message/reference/locality/PIN/kind/department.
+   - Show three-day escalation state and let municipality write/publish a response with status Answered or Resolved.
+5. Hazards:
+   - Overview of projects with disruption/road closure risk and navigation-broadcast status; inspect their operational details and detours.
+6. Municipal advisory dispatch:
+   - Send a PIN-scoped advisory record with message and optional target count; inspect recent audit logs. See limitations: code stores a log and reports channels, it does not call a real messaging gateway.
+
+## DEPARTMENT OFFICER PORTAL
+Aliases: /department and /department/dashboard. Project creation paths: /department/create-project and /official/create-project. Department dashboard tabs:
+1. Submissions/grievances:
+   - Department issue queue with all/pending/escalated/resolved filtering, question/grievance distinctions, search, escalation flags, and response composition.
+   - Officers publish replies and set status Answered or Resolved; reply appears in public issue feed.
+2. Projects:
+   - Department's projects with title/locality/PIN search and project detail/operations actions.
+3. Coordination:
+   - Department's conflict tickets and detected DigSync conflicts; review cross-department overlap, raise a ticket, and deal with arbitration/rescheduling.
+4. Create project:
+   - Capture title, category, locality/PIN/address, description/technical scope, budget, contractor, start/due dates, coordinates and operational details such as disruption, contacts, noise/dust, detour, funding.
+   - Backend assigns an auto-generated CG-2026-XXX code and derives an official's department from their JWT, avoiding client-supplied department spoofing for ordinary officials.
+   - Initial project defaults to In progress, 5% progress and milestone 3; an initial sanction event is written.
+   - Before registering a proposed schedule, UI can call conflict check; collisions are presented, and officer can create a ConflictTicket giving reason for proceeding.
+5. Conflict rescheduling:
+   - After municipal arbitration, the designated department proposes new dates. Backend rechecks the alternative date range against active projects and updates/creates the work record as Scheduled if clear.
+6. Field report review:
+   - Review reports, photo URL/caption references, workforce, equipment, hours, progress, status; set field submission to Reviewing/Approved using the status endpoint.
+7. Scope/authorization:
+   - Ordinary officials are intended to operate within their department. Project PATCH enforces a department substring check. Conflict ticket listing filters ordinary officials to tickets involving their department. Always inspect backend role/department guards before adding operations.
+
+## ON-SITE FIELD SUPERVISOR PORTAL
+Route: /onsite/dashboard, mobile-focused. /api/onsite/my-projects supplies projects and report counts. Onsite role tries department-matched works; if none match, backend falls back to active Scheduled/In progress/Delayed projects.
+Six tabs/forms:
+1. Progress: project selection, percentage 0–100, stage 1–7, summary/detail. On submit, project progress and step update; >=100 makes status Completed, and a Scheduled project with progress becomes In progress. A verified timeline event is added.
+2. Photo proof: project, descriptive summary/caption and photo URL/reference. Intended to document site inspection; see note that backend stores a URL string and has no dedicated binary-upload/storage service.
+3. Blocker/safety: select issue type and severity (Critical/High/Medium/Low in the UI), describe hazard/utility strike/missing barriers. Backend creates a linked Issue with BLK-style reference, Under Review status, and severity.
+4. Daily log: labor headcount, deployed machinery, shift hours (day, night, split shift examples), summary/detail.
+5. Delay: record subsurface obstacle/delay explanation; backend sets project status Delayed and delay_reason, creates an event.
+6. Audit history: list submitted reports and status badges such as Submitted, Reviewing, Approved.
+All submissions record official name, badge, department, report type, summary, detail, optional data and created time. GET accepts optional project_id filtering.
+
+## DOMAIN DATA MODEL
+Project (projects): id/code/title/category/department; locality, six-digit pincode, address and description; status and integer progress; budget and contractor; start_date, due_date, optional revised_date; lat/lng; disruption; delay_reason and mitigation; updated timestamp; current_step 1–7; engineer name/phone/email; contractor contact/phone; noise_warning, dust_warning; gmaps_broadcast; detour_advice; technical_scope; funding_program; created_by. Projects have one-to-many Events (cascade delete).
+
+Event (events): project_id, title, detail, created timestamp, verified boolean. Project creation, field progress/delay and conflict arbitration/rescheduling create events.
+
+Issue (issues): unique public ref; optional project_id; kind; department; message; optional phone/email; status (commonly Submitted, Under Review, Answered, Resolved); severity; locality/PIN; is_question; intimated_in_advance; created; official_reply/replied_at/replied_by. List response computes days_elapsed and is_escalated dynamically (unresolved for >=3 days).
+
+ConflictTicket (conflict_tickets): unique CT ref; requesting dept/officer/badge; proposed title/category/description/budget/dates/locality/PIN/ward/coordinates; optional requesting project; reason for proceeding; opposing project/dept/title/date interval; ticket status Pending/Reviewing/Resolved; approved department and municipal decision/resolver/time; rescheduled department/dates/status; notification booleans; created timestamp.
+
+FieldSubmission (field_submissions): project_id, official identity/badge/department, report_type, summary/detail, optional progress_pct/step_number/photo_url/photo_caption/severity/labor_count/machinery_deployed/shift_hours, status and timestamp.
+
+SMSLog (sms_logs): phone/target marker, PIN, message and created timestamp. Current broadcast code uses a synthetic ALL_ACTIVE_PINS_<PIN> target.
+
+MediaAttachment (media_attachments): id/UUID; nullable issue_id while staged; hashed one-time upload-token; original and generated stored filenames; internal storage path; media type/MIME; file size; created timestamp. An Issue has many attachments. Staged uploads have no issue until the public issue submission validates the upload token and associates it. Storage files are not stored in PostgreSQL.
+
+Project status strings used include Upcoming, Scheduled, In progress, Delayed, Completed, and Rescheduling Required. Status/progress are string/integer conventions rather than enums. Maintain spelling/case when using API data.
+
+## STARTUP AND SEED DATA
+- On startup SQLAlchemy creates missing tables, then ensure_columns adds selected legacy columns and widens issues.kind when needed. It is a lightweight compatibility mechanism, not a full migration framework.
+- seed_data returns without reseeding if even one Project exists. On an empty DB it inserts a Chennai demonstration dataset with dated works, events, citizen issues, and field records.
+- Seeded localities/PINs include Triplicane (600005), Melakottaiyur (600127), Ayanavaram (600023), T. Nagar (600017), Mylapore (600004), and more. Jobs span drainage, road, water, electricity, fibre, highways/water resources; seeded narratives include road-lane closures, detours, noise/dust controls, revised dates, delay causes, mitigation, contractors, engineer contacts.
+- Seed data uses a fixed reference date in the code (2026-10-10), so its timelines are illustrative and age as the calendar changes.
+
+## BACKEND API CATALOG
+Unless specified, paths start with /api.
+
+Identity:
+- POST /auth/login — accept employee_id or email, password, optional department; return JWT and user object.
+- GET /auth/me — return authenticated token claims.
+
+Projects, directory and stats:
+- GET /projects?department=&pincode=&locality=&status=&category=&search= — public filtered list; search title/code/description/locality/address.
+- GET /projects/{id} — public detail plus chronological events and project-linked issues.
+- POST /projects — authorized official/admin creates a project.
+- PATCH /projects/{id} — authorized user changes permitted project operational fields; official department checked.
+- POST /projects/{id}/events?title=&detail= — append verified event.
+- GET /departments — distinct project departments or fallback list.
+- GET /localities — counts by PIN/locality, active and delayed.
+- GET /stats?pincode= — aggregate project counts and budget.
+
+Citizen issues:
+- GET /issues?pincode=&locality=&department= — public issue feed including reply and escalation fields.
+- POST /issues — public issue/question submission.
+- POST /ask-question — public project-linked question-specific path.
+- POST /issues/{id}/reply — bearer-authenticated official/admin response and status.
+
+AI assistant and media:
+- POST /ai/chat — public citizen assistant; request has message, optional conversation_id, optional latitude/longitude, and up to eight user/assistant context turns. Response includes answer, source references, and suggestions. A location does not cause unrelated general questions to be treated as nearby civic searches.
+- POST /ai/transcribe — multipart audio `file`; validates supported MIME/extension/signature and configured size cap, sends bytes to the configured speech-to-text provider, returns `{ "text": "..." }`. Does not persist an extra copy.
+- POST /media/upload — multipart file + media_type; stages one validated evidence file and returns media metadata plus a one-time upload_token.
+- GET /media/{media_id} — serves an associated issue attachment safely; unattached or unknown IDs return not found.
+- POST /issues accepts optional attachments containing media_id/upload_token pairs, preserving compatibility for text-only callers. Issue response includes associated attachment metadata.
+
+Coordination:
+- GET /digsync — detected active cross-department proximity/schedule overlaps.
+- POST /projects/check-conflicts — auth required; inspect proposed dates/coordinates or PIN against active works.
+- GET /conflict-tickets — auth; ordinary officials see tickets involving their department, admins see all.
+- POST /conflict-tickets — official/admin raise ticket.
+- POST or PATCH /conflict-tickets/{id}/resolve — admin arbitration; choose department, decision text.
+- POST /conflict-tickets/{id}/reschedule — authenticated rescheduling after resolved ticket; checks new dates and updates/creates project.
+
+Field operations:
+- GET /onsite/my-projects — auth; field project list and submission count.
+- POST /onsite/submissions — auth; record report and synchronize progress/delay/blocker behavior.
+- GET /onsite/submissions?project_id= — auth; report history.
+- PATCH /onsite/submissions/{id}/status — auth; update review state.
+
+Location and broadcast:
+- GET /geocode/pincode?pin= — six-digit PIN lookup, offline centroid first, external lookup for unseeded values, Chennai fallback.
+- GET /geocode/reverse?lat=&lng= — reverse geocode using Nominatim.
+- POST /whatsapp/broadcast or /broadcasts/whatsapp — official/admin record PIN advisory and simulated channel response.
+- GET /broadcasts/logs?pincode= — auth endpoint, recent broadcast records.
+
+Health:
+- GET /health — service name/version/status.
+- GET / — API welcome/docs/health pointers.
+- FastAPI Swagger UI at /docs when API is running.
+
+## DIGSYNC AND COLLISION LOGIC (CURRENT IMPLEMENTATION)
+- GET /digsync considers projects with status In progress, Scheduled, Delayed or Upcoming; ignores same-department pairs.
+- It estimates distance from degree deltas using sqrt((lat1-lat2)^2 + (lng1-lng2)^2) * 111 km, considers pairs under 1.5 km, and checks project date ranges using revised_date or due_date. The detector emits overlaps/near sequential work within a 45-day window; high severity uses actual temporal overlap and under 0.8 km.
+- Pre-sanction check uses overlapping date ranges plus within 2 km if coordinates are supplied; otherwise it compares same PIN. It skips same department.
+- This is approximate demo logic, not a GIS road-corridor network analysis. The README's “all zones”, live GIS and detailed collision labels describe the intended product framing; rely on implementation rather than assuming external GIS inputs.
+
+## LOCATION AND MAP DATA
+- Project marker coordinates are stored per project.
+- Known Chennai PINs have a hardcoded centroid cache for offline PIN lookup.
+- Uncached PIN search tries OpenStreetMap Nominatim, then returns generic Chennai coordinates/name when lookup fails. Reverse lookup uses configured NOMINATIM_BASE_URL and NOMINATIM_USER_AGENT, rounds coordinates to improve cache hits, has an in-memory LRU cache (512), serializes requests and rate limits to about one request/second.
+- Current location sends browser coordinates to the backend reverse endpoint; no IP geolocation is used.
+- Map tiles use external providers (including street and Esri satellite layer); network/browser access is needed for tile rendering. Preserve provider attribution and Nominatim policy if changing providers.
+
+## WHAT IS SIMULATED, APPROXIMATE, OR IMPORTANT TO VERIFY
+- WhatsApp/SMS broadcast does not call WhatsApp Business API or an SMS gateway in this code. It writes SMSLog, returns a synthetic reference/count/channel list, and shows a dispatched-style message. The recipient population and delivery are not verified.
+- “Google Maps/navigation feed” flags/advisory badges are project data/UI. No Google Maps or Chennai Traffic Police dispatch integration is implemented in the inspected backend.
+- On-site field-submission photos still use the field workflow's photo_url/photo_caption fields. Citizen issue evidence separately uses the implemented binary media upload and MediaAttachment workflow. Do not assume field submissions share the citizen attachment infrastructure.
+- Citizen media uses persistent local filesystem storage by default, not S3. The storage service is replaceable but cloud object storage is not configured.
+- AI image/video understanding is not implemented. The assistant must not claim it inspected those files. Audio transcription is implemented only for recorded audio through the configured provider; existing audio uploads are not automatically transcribed.
+- General AI answers depend on a valid provider key/model/network. No live weather/news/web retrieval is configured. Utopia project and grievance facts remain database-grounded; the local demo database is illustrative and not an official live data feed.
+- Citizen escalation is computed when listing issues; there is no scheduled escalation worker or external notification.
+- Demo credentials are static and passwords are in source. JWT is required/configurable but production-grade user provisioning, password hashing for those demo accounts, revocation, and credential management are not present in this project.
+- CORS currently allows all origins and credentials. Review before production exposure.
+- The /onsite submission status route checks for an authenticated user but the code should be reviewed for role/department restrictions before treating its status action as admin-only.
+- Public list endpoints intentionally expose project and issue data; consider PII/privacy policy before collecting real phone/email data.
+- GPS, tile layers, and uncached Nominatim calls need the browser/network. Cached PIN coordinates work without geocoding network.
+- UI requests often catch API failures and return empty lists; the grievance form has a fallback synthetic reference when submission fails. A visible UI success should therefore be verified against the API/database when validating persistence.
+- README and code can drift. This brief is based on the current source tree; inspect App.tsx, router, schema and service for the exact behavior before making changes.
+
+## REPOSITORY MAP
+- README.md: setup and product overview/API summary.
+- AI_GUIDE.md: concise codebase orientation and implementation cautions.
+- compose.yml: Docker service definitions.
+- run-utopia.sh: local PostgreSQL + API + Vite launcher without Docker.
+- frontend/src/App.tsx: UI, routes, API client, interactions, login and portals.
+- frontend/src/style.css: visual styling and responsive behavior.
+- frontend/src/main.tsx: React app bootstrapping.
+- backend/app/main.py: API configuration/startup.
+- backend/app/routers/: API endpoint implementations.
+- backend/app/routers/ai_chat.py: AI chat, source selection/formatting, rate limiting, team-attribution and audio transcription routes.
+- backend/app/routers/media.py: staged evidence upload, secure file retrieval, and stale staged upload cleanup.
+- backend/app/schemas/: request and response validation.
+- backend/app/models/: database tables.
+- backend/app/models/media.py: issue multimedia attachment model.
+- backend/app/services/: authentication, DigSync, geocoding, seeding, AI provider/retrieval, and media storage services.
+- backend/app/services/ai_provider.py: strict Utopia and general assistant system prompts, provider calls, response grounding, and Whisper transcription relay.
+- backend/app/services/ai_retrieval.py: current SQL retrieval for public projects/issues and deterministic Utopia answer formatting.
+- backend/app/services/media_storage.py: MIME/extension/signature and size validation, UUID filesystem storage, upload-token helpers, and safe path resolution.
+- backend/migrations/0001_media_attachments.sql: explicit MediaAttachment table migration.
+- backend/app/database.py: PostgreSQL engine/session, schema compatibility.
+- backend/requirements.txt and requirements.lock: Python dependencies.
+- frontend/package.json and package-lock.json: JavaScript dependencies.
+- test/: backend, deployment, database startup and frontend build acceptance tests; test/README.md explains setup.
+
+## GUIDANCE FOR AN AI THAT RECEIVES THIS FILE
+Treat Utopia as a Chennai municipal public-works transparency and workflow prototype, not as a generic map or production-integrated city platform. Start by identifying whether the requested work concerns the public citizen portal, officer dashboard, field app, backend endpoint, persistence, or deployment. Trace UI behavior in frontend/src/App.tsx → fetchApi/API endpoint → router → Pydantic schema/model/service. Enforce permissions on the backend. Preserve the seven-stage lifecycle, department ownership, project/event/issue relationships, PIN/locality filtering, and the simulated-versus-live distinctions above. Do not assume README claims of external dispatch or GIS integration are implemented without checking source. PostgreSQL is required; JWT_SECRET is mandatory. Demo data only seeds an empty project table.

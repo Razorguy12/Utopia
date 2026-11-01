@@ -19,6 +19,7 @@ class Project(Base):
     progress: Mapped[int] = mapped_column(Integer)
     budget: Mapped[int] = mapped_column(Integer)
     contractor: Mapped[str] = mapped_column(String(120))
+    contractor_id: Mapped[Optional[int]] = mapped_column(ForeignKey('contractors.id'), nullable=True, index=True)
     start_date: Mapped[date] = mapped_column(Date)
     due_date: Mapped[date] = mapped_column(Date)
     revised_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)

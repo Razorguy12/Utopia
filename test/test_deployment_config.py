@@ -16,7 +16,8 @@ def test_compose_declares_services_health_dependencies_and_persistent_db():
     assert "${JWT_SECRET:?" in compose
     assert "${POSTGRES_PASSWORD:?" in compose
     assert "${API_PORT:-8001}:8001" in compose
-    assert "5174}:80" in compose
+    assert "WEB_PORT:-5174" in compose
+    assert "WEB_CONTAINER_PORT:-80" in compose
 
 
 def test_nginx_serves_spa_and_proxies_api_docs():

@@ -25,6 +25,7 @@ wheels/
 .pytest_cache/
 
 # Databases
+.utopia/
 *.db
 *.sqlite
 *.sqlite3

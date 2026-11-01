@@ -23,6 +23,10 @@ Compose reads `.env`, passes the database password to PostgreSQL and the API, an
 - **📚 Interactive API Documentation (Swagger)**: [http://localhost:8001/docs](http://localhost:8001/docs)
 - **🩺 Health Check**: [http://localhost:8001/api/health](http://localhost:8001/api/health)
 
+Optional AI responses use a server-side OpenAI-compatible provider. Set `AI_API_KEY` in the private `.env` to enable generated responses; without it, Utopia AI uses database-grounded response templates. Optional provider settings are `AI_MODEL`, `AI_API_BASE_URL`, `AI_TRANSCRIPTION_MODEL`, `AI_REQUEST_TIMEOUT`, and `AI_MAX_TOKENS`. The key is passed only to the API container. Live audio recordings can be transcribed through the configured provider and are sent to that provider for processing; the transcription request is not saved as a separate file. Multimedia evidence is stored in the persistent `media_uploads` volume, separate from the web root. Per-file caps default to 10 MiB for images, 20 MiB for audio, and 50 MiB for video; configure `MEDIA_MAX_IMAGE_BYTES`, `MEDIA_MAX_AUDIO_BYTES`, and `MEDIA_MAX_VIDEO_BYTES` to change them.
+
+Existing deployments create the new `media_attachments` table at API startup through SQLAlchemy metadata. The equivalent repeatable SQL migration is `backend/migrations/0001_media_attachments.sql`; apply it to an existing database manually only if the API startup migration is disabled. The uploads volume must be backed up along with PostgreSQL because issue rows store references to files in that volume.
+
 Compose replaces the old launcher for the full service lifecycle:
 
 ```sh
@@ -236,6 +240,11 @@ Use a disposable PostgreSQL database for tests. The suite creates and removes a 
 | **POST** | `/api/whatsapp/broadcast` | Broadcast localized advisory to registered citizens in a PIN code | Official / Admin |
 | **GET** | `/api/broadcasts/logs` | Fetch audit logs of dispatched citizen SMS/WhatsApp advisories | Official / Admin |
 | **GET** | `/api/health` | Service health status and version check | Public |
+| **POST** | `/api/ai/chat` | Database-grounded citizen assistant; accepts message, optional short context and coordinates; returns answer and record sources | Public, rate-limited |
+| **POST** | `/api/media/upload` | Stage an image/audio/video upload; multipart fields `file` and `media_type`; returns a one-use upload token | Public, rate-limited |
+| **GET** | `/api/media/{id}` | Serve evidence only after it is attached to a public issue | Public attached evidence |
+
+To attach evidence to an existing `POST /api/issues` request, include `attachments: [{"media_id": 123, "upload_token": "..."}]` (maximum five). Upload first, then submit the issue; the issue and attachment association commit in one database transaction. Text-only issue payloads remain supported. Images, audio and video are served through the API, not directly from the upload directory.
 
 ---
 
@@ -247,3 +256,14 @@ Use a disposable PostgreSQL database for tests. The suite creates and removes a 
 - **`ConflictTicket`**: Interdepartmental dispute tickets capturing requesting department, conflicting department, proposed dates, reason for proceeding, municipal executive decision, approved department, and rescheduled dates.
 - **`FieldSubmission`**: On-site supervisor reports capturing report type (`progress`, `photo`, `blocker`, `shift_log`, `delay`), workforce labor count, machinery deployed, shift hours, attached inspection photo URLs, captions, and approval statuses.
 - **`SMSLog`**: Audit record of simulated WhatsApp Business and SMS advisory broadcasts targeted by PIN code.
+# Community verification and contractor performance
+
+The existing citizen grievance feed supports anonymous community confirmations and comments. Residents can participate without creating an account; a browser community identity is used to prevent repeat actions from that browser, and authenticated accounts are also protected by database uniqueness constraints. Comments can include evidence uploaded through the existing media endpoint. Department staff review complaints at `/department/contractor-verification`; only an official verification can create a contractor score transaction.
+
+There is no separate public contractor page or contractor login. Municipal administrators manage scores, scoring rules, on-site account links, appeals, and the corroboration threshold at `/admin/contractors`, with interactive citywide charts on the Municipality dashboard. Each on-site official sees their linked contractor score and personal score history in the existing `/onsite/login` dashboard; the Department Officer role remains separate. Existing project contractor names are associated with contractor records during migration/startup. Unawarded placeholder contractor names are excluded.
+
+For an existing PostgreSQL database, apply `backend/migrations/0002_community_and_contractors.sql` using the project's database migration procedure before deploying. The migration is additive, preserves existing project contractor names, and leaves placeholder awards unassigned. Fresh databases also receive the schema through SQLAlchemy table creation. The runtime compatibility helper adds the new legacy columns, but the SQL migration is required to install the foreign keys and perform the historical contractor association.
+
+The default community corroboration threshold is five and can be changed by a municipal administrator. Score rules are seeded once with the configured defaults. Every score change is stored as an immutable transaction; approved appeals add reversal transactions. Completion rewards are triggered when a project transitions to Completed. Officers/admins can record quality inspections and explicit delay evaluations through the contractor performance API. A delay is not penalized automatically; the evaluator must mark it unjustified and provide a reason/reference.
+
+Municipal and on-site staff use the existing JWT authentication. Citizen accounts remain optional for public complaint discussion. Anonymous community activity is rate-limited per browser identity and client address; this in-memory rate limit is process-local. Contractor records migrated from the current demo seed data are illustrative and must not be presented as verified GCC procurement rankings until production project/contractor records are loaded.
