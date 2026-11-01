@@ -25,6 +25,8 @@ Compose reads `.env`, passes the database password to PostgreSQL and the API, an
 
 Optional AI responses use a server-side OpenAI-compatible provider. Set `AI_API_KEY` in the private `.env` to enable generated responses; without it, Utopia AI uses database-grounded response templates. Optional provider settings are `AI_MODEL`, `AI_API_BASE_URL`, `AI_TRANSCRIPTION_MODEL`, `AI_REQUEST_TIMEOUT`, and `AI_MAX_TOKENS`. The key is passed only to the API container. Live audio recordings can be transcribed through the configured provider and are sent to that provider for processing; the transcription request is not saved as a separate file. Multimedia evidence is stored in the persistent `media_uploads` volume, separate from the web root. Per-file caps default to 10 MiB for images, 20 MiB for audio, and 50 MiB for video; configure `MEDIA_MAX_IMAGE_BYTES`, `MEDIA_MAX_AUDIO_BYTES`, and `MEDIA_MAX_VIDEO_BYTES` to change them.
 
+The optional provider is used for general questions and to phrase answers grounded in retrieved public Utopia records. Project and grievance lookups continue to work without a key through deterministic database-backed answers. Do not put `AI_API_KEY` in frontend configuration or commit it to version control.
+
 Existing deployments create the new `media_attachments` table at API startup through SQLAlchemy metadata. The equivalent repeatable SQL migration is `backend/migrations/0001_media_attachments.sql`; apply it to an existing database manually only if the API startup migration is disabled. The uploads volume must be backed up along with PostgreSQL because issue rows store references to files in that volume.
 
 Compose replaces the old launcher for the full service lifecycle:
@@ -126,6 +128,20 @@ Use a disposable PostgreSQL database for tests. The suite creates and removes a 
   - **Ask a Question**: Residents can post queries about project timelines and delays; receives official engineer replies.
   - **Report Issue Modal**: Citizens can lodge complaints (excessive dust/noise, open trench hazard, water disruption) generating a trackable reference ID (`CGI-XXXX`).
   - **Automated 3-Day SLA Escalation**: Grievances unresolved after 3 days are automatically escalated to the GCC Super Admin triage board.
+
+### 1A. 🤖 Utopia AI Citizen Assistant
+*A public, conversational entry point to the same project and grievance information available in the citizen portal.*
+
+- **Conversational civic search**: Ask about projects, progress and milestones, delayed works, road closures and detours, departments, localities, citywide statistics, or a grievance reference. Search can use a six-digit PIN, locality, project code, or a location explicitly shared by the resident. Short conversation context supports follow-up questions.
+- **Record-backed answers with citations**: Civic answers are retrieved from current public project and issue records. The chat shows the matching Utopia record titles and project/issue references as sources. If the database has no supporting record, the assistant reports that instead of inventing a project fact. Without `AI_API_KEY`, civic queries use deterministic response templates; with a configured OpenAI-compatible provider, responses can be phrased by the selected model and checked against retrieved records.
+- **Optional general questions**: With `AI_API_KEY`, the assistant can answer greetings and general-knowledge questions. These answers do not use live web, news, or weather data. Without a key, the assistant explains that general answering is unavailable while civic record lookup remains available.
+- **Location-aware lookup**: Residents may share their browser location to find nearby works (within the retrieval radius) or use locality/PIN searches. Location is optional; permission failures leave manual search available.
+- **Guided grievance reporting**: The assistant can open a report form, preselect a likely issue type, and let the resident enter locality, optional PIN, related project, description, and optional contact details. Residents review and explicitly confirm the details before submission. The resulting reference is returned in chat and can be tracked in the portal.
+- **Evidence attachments**: Attach image, audio, or video evidence to a grievance. The assistant can receive and attach files but does not inspect or identify their contents. Uploads use the API’s validated media endpoint and persistent `media_uploads` volume; up to five files can be attached to one grievance. Audio transcription is an optional, separate provider operation.
+- **Voice input**: Supported audio recordings can be transcribed through the configured provider and inserted as text; the recording itself can also remain attached as grievance evidence. Transcription requires `AI_API_KEY` and supported audio format, and files are sent to the configured provider for processing.
+- **Privacy and service limits**: Chat and transcription endpoints are public and rate-limited to 20 requests per minute per client IP. Chat input and carried context are length-limited. Before a model call, email addresses and phone numbers in user text are redacted. Citizen media is not sent to the chat model for visual or audio interpretation; only an explicit transcription request sends audio to the configured transcription provider.
+
+The assistant is an information and reporting interface, not an emergency service or a municipal decision-maker. For immediate danger, contact the appropriate emergency service or GCC helpline (1913).
 
 ---
 
@@ -240,7 +256,8 @@ Use a disposable PostgreSQL database for tests. The suite creates and removes a 
 | **POST** | `/api/whatsapp/broadcast` | Broadcast localized advisory to registered citizens in a PIN code | Official / Admin |
 | **GET** | `/api/broadcasts/logs` | Fetch audit logs of dispatched citizen SMS/WhatsApp advisories | Official / Admin |
 | **GET** | `/api/health` | Service health status and version check | Public |
-| **POST** | `/api/ai/chat` | Database-grounded citizen assistant; accepts message, optional short context and coordinates; returns answer and record sources | Public, rate-limited |
+| **POST** | `/api/ai/chat` | Utopia AI chat; accepts message, optional conversation context and coordinates; returns answer, suggested questions, and retrieved public-record sources | Public, rate-limited (20/min/IP) |
+| **POST** | `/api/ai/transcribe` | Transcribe a supported audio recording through the configured AI provider; returns recognized text without persisting a transcription copy | Public, rate-limited (20/min/IP); requires `AI_API_KEY` |
 | **POST** | `/api/media/upload` | Stage an image/audio/video upload; multipart fields `file` and `media_type`; returns a one-use upload token | Public, rate-limited |
 | **GET** | `/api/media/{id}` | Serve evidence only after it is attached to a public issue | Public attached evidence |
 
